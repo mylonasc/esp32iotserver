@@ -6,6 +6,9 @@
 #include <ESP32Servo.h>
 #include <WiFiProvisioner.h> 
 
+
+#include <ArduinoJson.h> 
+
 // pinout reference: 
 // https://www.fambach.net/wp-content/uploads/D1_mini_ESP32_pinout.jpg
 
@@ -132,8 +135,6 @@ void handleResetProvisioning();
 void smoothHumiReadTask();
 String generateJsonResponse();
 String generateSmoothHumiDefaultsJson();
-String getEnabledSensorsJson();
-String generateSmoothHumiResultJson();
 int getPinFromLabel(String label);
 
 // --- PROGMEM HTML Content for common elements ---
@@ -517,61 +518,75 @@ void handleWateringPumps(){
   server.send(200, F("text/html"), message);
 }
 
+// --- NEW/MODIFIED --- Uses ArduinoJson for GET and POST
 void handleApi() {
   if (server.method() == HTTP_GET) {
     server.send(200, "application/json", generateJsonResponse());
   } else if (server.method() == HTTP_POST) {
-    if (server.hasHeader("Content-Type") && server.header("Content-Type").indexOf("application/json") != -1) {
-      String json = server.arg("plain");
-      // Basic parsing example. A real application should use a JSON library.
-      if (json.indexOf("\"max_seconds_on\"") != -1) {
-        int start = json.indexOf("\"max_seconds_on\":") + 18;
-        int end = json.indexOf("}", start); if (end == -1) end = json.indexOf(",", start);
-        if (end != -1) { max_seconds_on = json.substring(start, end).toInt(); }
-      }
+    if (!server.hasHeader("Content-Type") || server.header("Content-Type").indexOf("application/json") == -1) {
+      server.send(400, "application/json", "{\"status\":\"error\",\"message\":\"Please send JSON data\"}");
+      return;
+    }
+
+    JsonDocument doc;
+    DeserializationError error = deserializeJson(doc, server.arg("plain"));
+
+    if (error) {
+      Serial.print(F("deserializeJson() failed: "));
+      Serial.println(error.c_str());
+      server.send(400, "application/json", "{\"status\":\"error\",\"message\":\"Invalid JSON body\"}");
+      return;
+    }
+
+    // Check if the key exists before trying to use it
+    if (doc.containsKey("max_seconds_on")) {
+      max_seconds_on = doc["max_seconds_on"].as<int>();
       saveConfig();
       server.send(200, "application/json", "{\"status\":\"success\",\"message\":\"Configuration updated\"}");
     } else {
-      server.send(400, "application/json", "{\"status\":\"error\",\"message\":\"Please send JSON data\"}");
+      server.send(400, "application/json", "{\"status\":\"error\",\"message\":\"'max_seconds_on' key not found\"}");
     }
   }
 }
 
+// --- NEW/MODIFIED --- Rewritten to use ArduinoJson for parsing and generation
 void handleSmoothHumiSettings() {
   if (server.method() == HTTP_GET) {
     server.send(200, "application/json", generateSmoothHumiDefaultsJson());
     return;
   }
-  
+
   if (server.method() == HTTP_POST) {
     if (!server.hasHeader("Content-Type") || server.header("Content-Type").indexOf("application/json") == -1) {
       server.send(400, "application/json", "{\"status\":\"error\",\"message\":\"Invalid Content-Type. Expected application/json.\"}");
       return;
     }
-    String json = server.arg("plain");
-    if (json.indexOf("\"readings\"") != -1 && json.indexOf("\"interval_ms\"") != -1) {
-      int readingsStart = json.indexOf("\"readings\":") + 11;
-      int readingsEnd = json.indexOf(",", readingsStart); if (readingsEnd == -1) { readingsEnd = json.indexOf("}", readingsStart); }
-      smoothRead_defaults_readings = json.substring(readingsStart, readingsEnd).toInt();
 
-      int intervalStart = json.indexOf("\"interval_ms\":") + 14;
-      int intervalEnd = json.indexOf(",", intervalStart); if (intervalEnd == -1) { intervalEnd = json.indexOf("}", intervalStart); }
-      smoothRead_defaults_interval = json.substring(intervalStart, intervalEnd).toInt();
-      
+    JsonDocument doc;
+    DeserializationError error = deserializeJson(doc, server.arg("plain"));
+
+    if (error) {
+      Serial.print(F("deserializeJson() failed: "));
+      Serial.println(error.c_str());
+      server.send(400, "application/json", "{\"status\":\"error\",\"message\":\"Invalid JSON body\"}");
+      return;
+    }
+
+    if (doc.containsKey("readings") && doc.containsKey("interval_ms")) {
+      smoothRead_defaults_readings = doc["readings"].as<int>();
+      smoothRead_defaults_interval = doc["interval_ms"].as<long>();
       saveConfig();
       server.send(200, "application/json", "{\"status\":\"success\",\"message\":\"Smooth reading defaults updated.\"}");
     } else {
-      server.send(400, "application/json", "{\"status\":\"error\",\"message\":\"Please provide both 'readings' and 'interval_ms' fields.\"}");
+      server.send(400, "application/json", "{\"status\":\"error\",\"message\":\"To set defaults, please provide both 'readings' and 'interval_ms' fields.\"}");
     }
     return;
   }
+
   server.send(405, "application/json", "{\"status\":\"error\",\"message\":\"Method Not Allowed\"}");
 }
 
-/**
- * @brief Handles POST to /api/smooth_humi/read to trigger a non-blocking series of humidity readings.
- * The result will be available later via the /api endpoint.
- */
+// --- NEW/MODIFIED --- Cleaned up to use ArduinoJson consistently
 void handleSmoothHumiRead() {
   if (server.method() != HTTP_POST) {
     server.send(405, "application/json", "{\"status\":\"error\",\"message\":\"Method Not Allowed. Use POST.\"}");
@@ -586,35 +601,31 @@ void handleSmoothHumiRead() {
     return;
   }
 
-  String json = server.arg("plain");
-  String sensorLabel = "";
-  int numReadings = smoothRead_defaults_readings;
-  long interval = smoothRead_defaults_interval;
+  JsonDocument doc;
+  DeserializationError error = deserializeJson(doc, server.arg("plain"));
 
-  int labelStart = json.indexOf("\"sensor_label\":\"") + 16;
-  if (labelStart != 15) {
-    int labelEnd = json.indexOf("\"", labelStart);
-    sensorLabel = json.substring(labelStart, labelEnd);
-  } else {
+  if (error) {
+    Serial.print(F("deserializeJson() failed: "));
+    Serial.println(error.c_str());
+    server.send(400, "application/json", "{\"status\":\"error\",\"message\":\"Invalid JSON body\"}");
+    return;
+  }
+
+  if (!doc.containsKey("sensor_label")) {
     server.send(400, "application/json", "{\"status\":\"error\",\"message\":\"'sensor_label' is required.\"}");
     return;
   }
+
+  String sensorLabel = doc["sensor_label"].as<String>();
   int sensorPin = getPinFromLabel(sensorLabel);
   if (sensorPin == 0) {
     server.send(400, "application/json", "{\"status\":\"error\",\"message\":\"Invalid or disabled sensor label provided.\"}");
     return;
   }
   
-  if (json.indexOf("\"num_readings\"") != -1) {
-    int start = json.indexOf("\"num_readings\":") + 15;
-    int end = json.indexOf(",", start); if (end == -1) end = json.indexOf("}", start);
-    int value = json.substring(start, end).toInt(); if (value > 0) numReadings = value;
-  }
-  if (json.indexOf("\"interval_ms\"") != -1) {
-    int start = json.indexOf("\"interval_ms\":") + 14;
-    int end = json.indexOf(",", start); if (end == -1) end = json.indexOf("}", start);
-    long value = json.substring(start, end).toInt(); if (value > 0) interval = value;
-  }
+  // Use default values unless overridden in the JSON payload
+  int numReadings = doc.containsKey("num_readings") ? doc["num_readings"].as<int>() : smoothRead_defaults_readings;
+  long interval = doc.containsKey("interval_ms") ? doc["interval_ms"].as<long>() : smoothRead_defaults_interval;
 
   // --- Setup and start the non-blocking task ---
   _smoothHumi_sensorPin_task = sensorPin;
@@ -624,7 +635,7 @@ void handleSmoothHumiRead() {
   _smoothHumi_readingsTaken = 0;
   _smoothHumi_rawSum = 0;
   _smoothHumi_mappedSum = 0;
-  _smoothHumi_lastReadMillis = millis() - interval; // Trigger first read immediately in the next loop
+  _smoothHumi_lastReadMillis = millis() - interval; // Trigger first read immediately
   _smoothHumi_result_isNew = false; // Invalidate old result
   _smoothHumi_task_running = true;
 
@@ -638,69 +649,65 @@ int getPinFromLabel(String label) {
   return 0;
 }
 
+// --- NEW/MODIFIED --- Rewritten to build the JSON response using ArduinoJson object model
 String generateJsonResponse() {
-  String json = "{";
-  json += "\"uptime_seconds\":" + String(millis() / 1000) + ",";
-  json += "\"wifi_status\":\"" + String(WiFi.status() == WL_CONNECTED ? "Connected" : "Not Connected") + "\",";
-  json += "\"humi_a_raw\":" + String(humi_a) + ",";
-  json += "\"humi_a_mapped\":" + String(humi_a_mapped) + ",";
-  json += "\"humi_a_label\":\"" + humiSensA_label + "\",";
-  json += "\"humi_b_raw\":" + String(humi_b) + ",";
-  json += "\"humi_b_mapped\":" + String(humi_b_mapped) + ",";
-  json += "\"humi_b_label\":\"" + humiSensB_label + "\",";
-  json += "\"pump_task_active\":" + String(_global_sched_pump_task ? "true" : "false") + ",";
-  json += "\"pump_task_remaining_seconds\":" + String( ((float)(millis_end_task > millis() ? (millis_end_task - millis()) : 0) / 1000.0), 1) + ",";
-  json += "\"config\":{";
-  json += "\"max_seconds_on\":" + String(max_seconds_on) + ",";
-  json += "\"servo_enabled\":" + String(servo_enabled ? "true" : "false") + ",";
-  json += "\"humiTask_enabled\":" + String(humiTask_enabled ? "true" : "false");
-  json += "},";
-  json += "\"enabled_sensors\":" + getEnabledSensorsJson() + ",";
-  json += "\"smooth_humi_task_running\":" + String(_smoothHumi_task_running ? "true" : "false") + ",";
-  json += "\"last_smooth_humi_result\":" + generateSmoothHumiResultJson();
-  json += "}";
-  return json;
-}
+  JsonDocument doc;
 
-String getEnabledSensorsJson() {
-  String json = "[";
-  bool first = true;
+  doc["uptime_seconds"] = millis() / 1000;
+  doc["wifi_status"] = (WiFi.status() == WL_CONNECTED) ? "Connected" : "Not Connected";
+  doc["humi_a_raw"] = humi_a;
+  doc["humi_a_mapped"] = humi_a_mapped;
+  doc["humi_a_label"] = humiSensA_label;
+  doc["humi_b_raw"] = humi_b;
+  doc["humi_b_mapped"] = humi_b_mapped;
+  doc["humi_b_label"] = humiSensB_label;
+  doc["pump_task_active"] = _global_sched_pump_task;
+  doc["pump_task_remaining_seconds"] = ((float)(millis_end_task > millis() ? (millis_end_task - millis()) : 0) / 1000.0);
+
+  JsonObject config = doc.createNestedObject("config");
+  config["max_seconds_on"] = max_seconds_on;
+  config["servo_enabled"] = servo_enabled;
+  config["humiTask_enabled"] = humiTask_enabled;
+
+  JsonArray enabledSensors = doc.createNestedArray("enabled_sensors");
   if (humiSensA_enabled) {
-    if (!first) json += ",";
-    json += "{\"label\":\"" + humiSensA_label + "\",\"pin\":" + String(humiSensA_pin) + "}";
-    first = false;
+    JsonObject sensorA = enabledSensors.createNestedObject();
+    sensorA["label"] = humiSensA_label;
+    sensorA["pin"] = humiSensA_pin;
   }
   if (humiSensB_enabled) {
-    if (!first) json += ",";
-    json += "{\"label\":\"" + humiSensB_label + "\",\"pin\":" + String(humiSensB_pin) + "}";
-    first = false;
+    JsonObject sensorB = enabledSensors.createNestedObject();
+    sensorB["label"] = humiSensB_label;
+    sensorB["pin"] = humiSensB_pin;
   }
-  json += "]";
-  return json;
+  
+  doc["smooth_humi_task_running"] = _smoothHumi_task_running;
+  
+  if (_smoothHumi_result_isNew) {
+    JsonObject result = doc.createNestedObject("last_smooth_humi_result");
+    result["sensor_label"] = _smoothHumi_result_label;
+    result["average_raw_value"] = _smoothHumi_result_rawAvg;
+    result["average_humidity_percent"] = _smoothHumi_result_mappedAvg;
+  } else {
+    doc["last_smooth_humi_result"] = nullptr; // Represents JSON null
+  }
+  
+  String jsonOutput;
+  serializeJson(doc, jsonOutput);
+  return jsonOutput;
 }
 
+// --- NEW/MODIFIED --- Rewritten to build JSON response using ArduinoJson
 String generateSmoothHumiDefaultsJson() {
-  String json = "{";
-  json += "\"readings\":" + String(smoothRead_defaults_readings) + ",";
-  json += "\"interval_ms\":" + String(smoothRead_defaults_interval);
-  json += "}";
-  return json;
+  JsonDocument doc;
+  doc["readings"] = smoothRead_defaults_readings;
+  doc["interval_ms"] = smoothRead_defaults_interval;
+  
+  String jsonOutput;
+  serializeJson(doc, jsonOutput);
+  return jsonOutput;
 }
 
-/**
- * @brief Generates JSON for the result of the last completed smooth humidity reading.
- */
-String generateSmoothHumiResultJson() {
-  if (!_smoothHumi_result_isNew) {
-    return "null";
-  }
-  String json = "{";
-  json += "\"sensor_label\":\"" + _smoothHumi_result_label + "\",";
-  json += "\"average_raw_value\":" + String(_smoothHumi_result_rawAvg, 2) + ",";
-  json += "\"average_humidity_percent\":" + String(_smoothHumi_result_mappedAvg, 2);
-  json += "}";
-  return json;
-}
 
 // --- Setup and Loop Functions ---
 
@@ -709,6 +716,10 @@ void setup(void) {
   Serial.println(F("\nESP32 Booting (Non-Blocking Version)..."));
 
   loadConfig();
+
+  const char* headersToCollect[] = {"Content-Type", "User-Agent", "Content-Length"};
+  size_t headerCount = sizeof(headersToCollect) / sizeof(char*);
+  server.collectHeaders(headersToCollect, headerCount);
 
   pinMode(led, OUTPUT); digitalWrite(led, LOW);
   pinMode(pumpA_pin, OUTPUT); digitalWrite(pumpA_pin, LOW);
@@ -755,7 +766,7 @@ void loop(void) {
       readHumidityTask();
       handleServo();
       smoothHumiReadTask();
-      delay(2); // Small delay to prevent tight loop from overwhelming CPU, good practice
+      delay(2);
       break;
 
     case PROVISIONING:
@@ -903,10 +914,6 @@ void startApplicationServices() {
 
 // --- Application Task Functions ---
 
-/**
- * @brief Handles servo movement using a non-blocking state machine.
- * This function is called on every loop and moves the servo one step at a time.
- */
 void handleServo(){
   if (!servo_enabled) {
     if (servoState != SERVO_IDLE) { // Cleanup if disabled mid-movement
@@ -991,10 +998,6 @@ void readHumidityTask(){
   }
 }
 
-/**
- * @brief Performs one step of the smooth humidity reading task.
- * Called on every loop, it takes readings at the specified interval without blocking.
- */
 void smoothHumiReadTask() {
   if (!_smoothHumi_task_running) {
     return;
@@ -1025,4 +1028,3 @@ void smoothHumiReadTask() {
     }
   }
 }
-
