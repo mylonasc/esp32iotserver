@@ -57,7 +57,6 @@ int   _global_time_seconds_on;
 bool _global_sched_pump_task = false;
 bool _global_sched_button = false;
 bool _pump_task_lock = false;
-bool _global_smooth_humi_task_running = false; // New variable for smooth reading task
 
 unsigned long _previous_millis_read_sensors = 0; 
 unsigned long int millis_end_task; 
@@ -70,6 +69,29 @@ int humi_b_mapped;
 
 const int led = 2; // 2 for D1 mini esp32
 
+// --- Non-Blocking Servo Task State ---
+enum ServoState { SERVO_IDLE, SERVO_MOVING_TO_FINAL, SERVO_MOVING_TO_INIT };
+ServoState servoState = SERVO_IDLE;
+int servoCurrentAngle = 90;
+unsigned long servoLastMoveMillis = 0;
+
+// --- Non-Blocking Smooth Humidity Reading Task State ---
+bool _smoothHumi_task_running = false;
+int _smoothHumi_readingsTaken = 0;
+long _smoothHumi_rawSum = 0;
+long _smoothHumi_mappedSum = 0;
+int _smoothHumi_numReadings_task = 0;
+long _smoothHumi_interval_task = 0;
+int _smoothHumi_sensorPin_task = 0;
+String _smoothHumi_sensorLabel_task = "";
+unsigned long _smoothHumi_lastReadMillis = 0;
+
+// --- Variables to store the final smooth reading result ---
+float _smoothHumi_result_rawAvg = 0.0;
+float _smoothHumi_result_mappedAvg = 0.0;
+String _smoothHumi_result_label = "";
+bool _smoothHumi_result_isNew = false; // Flag to indicate if the result is fresh
+
 // --- WiFi Provisioning and Connection State Management ---
 enum WiFiState {
   NOT_PROVISIONED,
@@ -77,14 +99,11 @@ enum WiFiState {
   CONNECTED,
   PROVISIONING
 };
-
 WiFiState currentWiFiState = NOT_PROVISIONED;
-
 unsigned long lastConnectionAttemptMillis = 0;
 const long CONNECTION_RETRY_INTERVAL = 10000; 
 const int MAX_CONNECTION_ATTEMPTS = 5;      
 int connectionAttemptsCount = 0;
-
 String savedSSID = "";
 String savedPassword = "";
 
@@ -107,10 +126,14 @@ void connectToWiFi();
 void startProvisioningMode();
 void clearSavedCredentials();
 void handleApi();
-void handleSmoothHumi();
+void handleSmoothHumiSettings();
+void handleSmoothHumiRead();
+void handleResetProvisioning();
+void smoothHumiReadTask();
 String generateJsonResponse();
 String generateSmoothHumiDefaultsJson();
 String getEnabledSensorsJson();
+String generateSmoothHumiResultJson();
 int getPinFromLabel(String label);
 
 // --- PROGMEM HTML Content for common elements ---
@@ -151,11 +174,6 @@ const char PROGMEM HTML_FOOTER_COMMON[] = R"rawliteral(
 
 // --- Web Server Handlers ---
 
-/**
- * @brief Handles the root URL ("/") to display system info and a message form.
- * Uses PROGMEM for static HTML and String for dynamic content.
- * Removed automatic refresh.
- */
 void handleRoot() {
   digitalWrite(led, 1);
   int sec = millis() / 1000;
@@ -195,10 +213,6 @@ void handleRoot() {
   digitalWrite(led, 0);
 }
 
-/**
- * @brief Handles POST requests to "/setMessage" to update a stored message.
- * Expects a form field "msg" containing the new message.
- */
 void handleSetMessage() {
   if (!server.hasArg(F("msg"))) {
     server.send(400, F("text/plain"), F("Missing 'msg' field in the form."));
@@ -215,10 +229,6 @@ void handleSetMessage() {
   server.send(302, F("text/plain"), F("Message updated. Redirecting..."));
 }
 
-/**
- * @brief Handles configuration settings for pumps, servos, and humidity sensors.
- * Allows enabling/disabling and setting parameters.
- */
 void handleConfig() {
   if (server.method() == HTTP_POST) {
     String old_esp_hostname = esp_hostname; 
@@ -359,15 +369,18 @@ void handleConfig() {
   
   htmlResponse += String(F("<input type='submit' value='Save Configuration'>"));
   htmlResponse += String(F("</form>"));
+
+  htmlResponse += String(F("<hr><h2>Device Management</h2>"));
+  htmlResponse += String(F("<form action='/reset_wifi' method='POST'>"));
+  htmlResponse += String(F("<p>This will clear all saved WiFi settings and restart the device in provisioning mode, allowing you to connect to a new network.</p>"));
+  htmlResponse += String(F("<button type='submit' style='background-color:#d9534f;'>Reset WiFi & Reboot</button>"));
+  htmlResponse += String(F("</form>"));
+  
   htmlResponse += String(HTML_FOOTER_COMMON);
 
   server.send(200, F("text/html"), htmlResponse);
 }
 
-
-/**
- * @brief Handles requests for unknown URLs.
- */
 void handleNotFound() {
   digitalWrite(led, 1);
   String message = String(F("File Not Found\n\n"));
@@ -387,9 +400,6 @@ void handleNotFound() {
   digitalWrite(led, 0);
 }
 
-/**
- * @brief Turns off all pumps and resets pump task variables.
- */
 void all_pumps_off(){
   digitalWrite(pumpA_pin, LOW);
   digitalWrite(pumpB_pin, LOW);
@@ -399,35 +409,24 @@ void all_pumps_off(){
   _global_sched_pump_task = false;
 }
 
-/**
- * @brief Reads humidity sensor values and maps them to a 0-100% range.
- * Respects sensor enable flags and configured pins.
- */
 void readHumidity(){
   if (humiSensA_enabled) {
     humi_a = analogRead(humiSensA_pin);
     humi_a_mapped = map(humi_a, 2300, 4095, 100, 0); // Adjust calibration as needed
-    Serial.print(humiSensA_label); Serial.print(String(F(" Raw: "))); Serial.print(humi_a); Serial.print(String(F(" Mapped: "))); Serial.println(humi_a_mapped);
   } else {
-    humi_a = 0; // Or some indicator that it's disabled
+    humi_a = 0;
     humi_a_mapped = 0;
   }
 
   if (humiSensB_enabled) {
     humi_b = analogRead(humiSensB_pin);
     humi_b_mapped = map(humi_b, 2300, 4095, 100, 0); // Adjust calibration as needed
-    Serial.print(humiSensB_label); Serial.print(String(F(" Raw: "))); Serial.print(humi_b); Serial.print(String(F(" Mapped: "))); Serial.println(humi_b_mapped);
   } else {
     humi_b = 0;
     humi_b_mapped = 0;
   }
 }
 
-/**
- * @brief Handles servo control requests via a web interface.
- * Allows setting servo angles and movement delay.
- * Uses String concatenation for dynamic HTML generation.
- */
 void handleServoCtrl(){
   String message = String(HTML_HEADER_COMMON);
   message += String(HTML_STYLE);
@@ -435,49 +434,31 @@ void handleServoCtrl(){
   message += String(F("<div class='nav-links'><a href='/'>Home</a><a href='/watering_pumps'>Pumps</a><a href='/servo_ctrl'>Servo</a><a href='/config'>Config</a></div>"));
   message += String(F("<h1>Servo Control</h1>"));
 
-  message += String(F("<form action=\"/servo_ctrl\" method=\"get\">")); // Changed to GET for simplicity in this example
+  message += String(F("<form action=\"/servo_ctrl\" method=\"get\">"));
   message += String(F("    <button type=\"submit\" name=\"servo\" value=\"trigger\" class='button-blue'>Trigger Servo Movement</button>"));
-  message += String(F("    <div>Millis Move Delay: <input type=\"text\" name=\"millis_move_delay\" value=\""));
-  message += String(servo_millisMoveDelay);
-  message += String(F("\"></div>"));
-  message += String(F("    <div>Initial Angle: <input type=\"text\" name=\"init_angle\" value=\""));
-  message += String(servo_initAngle);
-  message += String(F("\"></div>"));
-  message += String(F("    <div>Final Angle: <input type=\"text\" name=\"final_angle\" value=\""));
-  message += String(servo_finalAngle);
-  message += String(F("\"></div>"));
   message += String(F("</form>"));
+
+  // Display servo status
+  if (servoState != SERVO_IDLE) {
+    message += String(F("<p>Servo is currently moving...</p>"));
+  }
 
   message += String(F("<div>")) + humiSensA_label + String(F(": ")) + String(humi_a_mapped) + String(F("% ")) + humiSensB_label + String(F(": ")) + String(humi_b_mapped) + String(F("%</div>"));
   message += String(F("<div>Pump Task Remaining: ")) + String( ((float)(millis_end_task > millis() ? (millis_end_task - millis()) : 0) / 1000.0), 1) + String(F(" seconds</div>"));
 
-  // Process servo arguments if present
   if(server.hasArg(F("servo"))){
-    if (server.hasArg(F("millis_move_delay"))){
-      servo_millisMoveDelay = server.arg(F("millis_move_delay")).toInt();
-      Serial.print(String(F("Set servo_millisMoveDelay: "))); Serial.println(servo_millisMoveDelay);
+    if (servoState == SERVO_IDLE) {
+      _global_sched_button = true;
+      message += String(F("<p>Servo movement scheduled!</p>"));
+    } else {
+      message += String(F("<p>Servo is already in motion!</p>"));
     }
-    if (server.hasArg(F("init_angle"))){
-      servo_initAngle = server.arg(F("init_angle")).toInt();
-      Serial.print(String(F("Set servo_initAngle: "))); Serial.println(servo_initAngle);
-    }
-    if(server.hasArg(F("final_angle"))){
-      servo_finalAngle = server.arg(F("final_angle")).toInt();
-      Serial.print(String(F("Set servo_finalAngle: "))); Serial.println(servo_finalAngle);
-    }
-    _global_sched_button = true; // Schedule servo movement
-    message += String(F("<p>Servo movement scheduled!</p>"));
   }
 
   message += String(HTML_FOOTER_COMMON);
   server.send(200, F("text/html"), message);
 }
 
-/**
- * @brief Handles watering pump control requests via a web interface.
- * Allows turning pumps on for a specified duration.
- * Uses String concatenation for dynamic HTML generation.
- */
 void handleWateringPumps(){
   String message = String(HTML_HEADER_COMMON);
   message += String(HTML_STYLE);
@@ -485,7 +466,7 @@ void handleWateringPumps(){
   message += String(F("<div class='nav-links'><a href='/'>Home</a><a href='/watering_pumps'>Pumps</a><a href='/servo_ctrl'>Servo</a><a href='/config'>Config</a></div>"));
   message += String(F("<h1>Watering Pumps Control</h1>"));
 
-  message += String(F("<form action=\"/watering_pumps\" method=\"get\">")); // Changed to GET for simplicity
+  message += String(F("<form action=\"/watering_pumps\" method=\"get\">"));
   if (pumpA_enabled) message += String(F("    <button type=\"submit\" name=\"pump\" value=\"pump_a\">Pump A</button>"));
   if (pumpB_enabled) message += String(F("    <button type=\"submit\" name=\"pump\" value=\"pump_b\">Pump B</button>"));
   if (pumpC_enabled) message += String(F("    <button type=\"submit\" name=\"pump\" value=\"pump_c\">Pump C</button>"));
@@ -500,7 +481,6 @@ void handleWateringPumps(){
   message += String(F("<div>")) + humiSensA_label + String(F(": ")) + String(humi_a_mapped) + String(F("% ")) + humiSensB_label + String(F(": ")) + String(humi_b_mapped) + String(F("%</div>"));
   message += String(F("<div>Pump Task Remaining: ")) + String( ((float)(millis_end_task > millis() ? (millis_end_task - millis()) : 0) / 1000.0), 1) + String(F(" seconds</div>"));
 
-  // Process pump arguments
   if(server.hasArg(F("pump"))){
     String pumpArg = server.arg(F("pump"));
     if(pumpArg.equals(F("all_off"))){
@@ -513,22 +493,14 @@ void handleWateringPumps(){
         int which_pump_pin = 0;
         bool pump_is_enabled = false;
 
-        if(pumpArg.equals(F("pump_a")) && pumpA_enabled){
-          which_pump_pin = pumpA_pin;
-          pump_is_enabled = true;
-        } else if(pumpArg.equals(F("pump_b")) && pumpB_enabled){
-          which_pump_pin = pumpB_pin;
-          pump_is_enabled = true;
-        } else if(pumpArg.equals(F("pump_c")) && pumpC_enabled){
-          which_pump_pin = pumpC_pin;
-          pump_is_enabled = true;
-        }
+        if(pumpArg.equals(F("pump_a")) && pumpA_enabled){ which_pump_pin = pumpA_pin; pump_is_enabled = true; }
+        else if(pumpArg.equals(F("pump_b")) && pumpB_enabled){ which_pump_pin = pumpB_pin; pump_is_enabled = true; }
+        else if(pumpArg.equals(F("pump_c")) && pumpC_enabled){ which_pump_pin = pumpC_pin; pump_is_enabled = true; }
 
-        if (pump_is_enabled && !_global_sched_pump_task) { // Only schedule if enabled and no pump task is active
+        if (pump_is_enabled && !_global_sched_pump_task) {
           _global_which_pump = which_pump_pin;
           _global_time_seconds_on = time_seconds_on;
           _global_sched_pump_task = true;
-          Serial.print(String(F("Scheduled pump "))); Serial.print(pumpArg); Serial.print(String(F(" for "))); Serial.print(time_seconds_on); Serial.println(String(F(" seconds.")));
           message += String(F("<p>Pump ")) + pumpArg + String(F(" scheduled for ")) + String(time_seconds_on) + String(F(" seconds.</p>"));
         } else if (_global_sched_pump_task) {
           message += String(F("<p>A pump task is already running. Please wait.</p>"));
@@ -545,30 +517,18 @@ void handleWateringPumps(){
   server.send(200, F("text/html"), message);
 }
 
-/**
- * @brief Handles the /api endpoint for RESTful access to device data and controls.
- */
 void handleApi() {
   if (server.method() == HTTP_GET) {
     server.send(200, "application/json", generateJsonResponse());
   } else if (server.method() == HTTP_POST) {
-    // Check for JSON content type
     if (server.hasHeader("Content-Type") && server.header("Content-Type").indexOf("application/json") != -1) {
       String json = server.arg("plain");
-      // You would use a JSON parsing library here for a more robust solution.
-      // For this example, we'll use simple string parsing.
+      // Basic parsing example. A real application should use a JSON library.
       if (json.indexOf("\"max_seconds_on\"") != -1) {
         int start = json.indexOf("\"max_seconds_on\":") + 18;
-        int end = json.indexOf("}", start);
-        if (end == -1) end = json.indexOf(",", start);
-        if (end != -1) {
-          String valueStr = json.substring(start, end);
-          valueStr.trim(); // Trim the string after creating it
-          max_seconds_on = valueStr.toInt();
-        }
+        int end = json.indexOf("}", start); if (end == -1) end = json.indexOf(",", start);
+        if (end != -1) { max_seconds_on = json.substring(start, end).toInt(); }
       }
-      // Add similar parsing for other configurable variables here.
-      
       saveConfig();
       server.send(200, "application/json", "{\"status\":\"success\",\"message\":\"Configuration updated\"}");
     } else {
@@ -577,132 +537,107 @@ void handleApi() {
   }
 }
 
-/**
- * @brief Handles the /api/smooth_humi endpoint to get/set defaults or perform a series of readings.
- */
-void handleSmoothHumi() {
-  // Handle GET request to return current defaults
+void handleSmoothHumiSettings() {
   if (server.method() == HTTP_GET) {
     server.send(200, "application/json", generateSmoothHumiDefaultsJson());
     return;
   }
   
-  // Handle POST request
   if (server.method() == HTTP_POST) {
     if (!server.hasHeader("Content-Type") || server.header("Content-Type").indexOf("application/json") == -1) {
       server.send(400, "application/json", "{\"status\":\"error\",\"message\":\"Invalid Content-Type. Expected application/json.\"}");
       return;
     }
-
     String json = server.arg("plain");
-    
-    // Check for "trigger" to start the task
-    if (json.indexOf("\"trigger\":true") != -1) {
-      if (_global_smooth_humi_task_running) {
-        server.send(503, "application/json", "{\"status\":\"error\",\"message\":\"Task already in progress. Please wait.\"}");
-        return;
-      }
+    if (json.indexOf("\"readings\"") != -1 && json.indexOf("\"interval_ms\"") != -1) {
+      int readingsStart = json.indexOf("\"readings\":") + 11;
+      int readingsEnd = json.indexOf(",", readingsStart); if (readingsEnd == -1) { readingsEnd = json.indexOf("}", readingsStart); }
+      smoothRead_defaults_readings = json.substring(readingsStart, readingsEnd).toInt();
 
-      String sensorLabel = "";
-      int numReadings = smoothRead_defaults_readings;
-      long interval = smoothRead_defaults_interval;
-
-      // Extract sensor label from JSON
-      int labelStart = json.indexOf("\"sensor_label\":\"") + 16;
-      if (labelStart != 15) { // 15 is the index if not found
-        int labelEnd = json.indexOf("\"", labelStart);
-        sensorLabel = json.substring(labelStart, labelEnd);
-      } else {
-        server.send(400, "application/json", "{\"status\":\"error\",\"message\":\"'sensor_label' is required to trigger a reading.\"}");
-        return;
-      }
-
-      int sensorPin = getPinFromLabel(sensorLabel);
-      if (sensorPin == 0) {
-        server.send(400, "application/json", "{\"status\":\"error\",\"message\":\"Invalid or disabled sensor label provided.\"}");
-        return;
-      }
+      int intervalStart = json.indexOf("\"interval_ms\":") + 14;
+      int intervalEnd = json.indexOf(",", intervalStart); if (intervalEnd == -1) { intervalEnd = json.indexOf("}", intervalStart); }
+      smoothRead_defaults_interval = json.substring(intervalStart, intervalEnd).toInt();
       
-      // Extract optional reading parameters from JSON
-      if (json.indexOf("\"num_readings\"") != -1) {
-        numReadings = json.substring(json.indexOf("\"num_readings\":") + 15, json.indexOf(",", json.indexOf("\"num_readings\":"))).toInt();
-      }
-      if (json.indexOf("\"interval_ms\"") != -1) {
-        interval = json.substring(json.indexOf("\"interval_ms\":") + 14, json.indexOf(",", json.indexOf("\"interval_ms\":"))).toInt();
-      }
-
-      if (numReadings <= 0) numReadings = smoothRead_defaults_readings;
-      if (interval <= 0) interval = smoothRead_defaults_interval;
-      
-      _global_smooth_humi_task_running = true;
-      Serial.print("Starting smooth reading for "); Serial.print(sensorLabel); Serial.println("...");
-
-      long rawSum = 0;
-      long mappedSum = 0;
-      
-      for (int i = 0; i < numReadings; i++) {
-        int raw = analogRead(sensorPin);
-        int mapped = map(raw, 2300, 4095, 100, 0);
-        rawSum += raw;
-        mappedSum += mapped;
-        delay(interval);
-      }
-
-      _global_smooth_humi_task_running = false;
-
-      float rawAvg = (float)rawSum / numReadings;
-      float mappedAvg = (float)mappedSum / numReadings;
-
-      String responseJson = "{";
-      responseJson += "\"status\":\"success\",";
-      responseJson += "\"sensor_label\":\"" + sensorLabel + "\",";
-      responseJson += "\"num_readings\":" + String(numReadings) + ",";
-      responseJson += "\"interval_ms\":" + String(interval) + ",";
-      responseJson += "\"average_raw_value\":" + String(rawAvg, 2) + ",";
-      responseJson += "\"average_humidity_percent\":" + String(mappedAvg, 2);
-      responseJson += "}";
-
-      server.send(200, "application/json", responseJson);
-      return;
-    } 
-    // Handle POST request to set defaults
-    else {
-      if (json.indexOf("\"readings\"") != -1 && json.indexOf("\"interval_ms\"") != -1) {
-        int readingsStart = json.indexOf("\"readings\":") + 11;
-        int readingsEnd = json.indexOf(",", readingsStart);
-        smoothRead_defaults_readings = json.substring(readingsStart, readingsEnd).toInt();
-
-        int intervalStart = json.indexOf("\"interval_ms\":") + 14;
-        int intervalEnd = json.indexOf("}", intervalStart);
-        smoothRead_defaults_interval = json.substring(intervalStart, intervalEnd).toInt();
-
-        saveConfig();
-        server.send(200, "application/json", "{\"status\":\"success\",\"message\":\"Smooth reading defaults updated.\"}");
-      } else {
-        server.send(400, "application/json", "{\"status\":\"error\",\"message\":\"To set defaults, please provide both 'readings' and 'interval_ms' fields.\"}");
-      }
+      saveConfig();
+      server.send(200, "application/json", "{\"status\":\"success\",\"message\":\"Smooth reading defaults updated.\"}");
+    } else {
+      server.send(400, "application/json", "{\"status\":\"error\",\"message\":\"Please provide both 'readings' and 'interval_ms' fields.\"}");
     }
+    return;
   }
+  server.send(405, "application/json", "{\"status\":\"error\",\"message\":\"Method Not Allowed\"}");
 }
 
 /**
- * @brief Helper function to get the sensor pin from its label.
- * @param label The label of the sensor.
- * @return The GPIO pin number, or 0 if not found or disabled.
+ * @brief Handles POST to /api/smooth_humi/read to trigger a non-blocking series of humidity readings.
+ * The result will be available later via the /api endpoint.
  */
+void handleSmoothHumiRead() {
+  if (server.method() != HTTP_POST) {
+    server.send(405, "application/json", "{\"status\":\"error\",\"message\":\"Method Not Allowed. Use POST.\"}");
+    return;
+  }
+  if (!server.hasHeader("Content-Type") || server.header("Content-Type").indexOf("application/json") == -1) {
+    server.send(400, "application/json", "{\"status\":\"error\",\"message\":\"Invalid Content-Type. Expected application/json.\"}");
+    return;
+  }
+  if (_smoothHumi_task_running) {
+    server.send(503, "application/json", "{\"status\":\"error\",\"message\":\"Task already in progress. Please wait.\"}");
+    return;
+  }
+
+  String json = server.arg("plain");
+  String sensorLabel = "";
+  int numReadings = smoothRead_defaults_readings;
+  long interval = smoothRead_defaults_interval;
+
+  int labelStart = json.indexOf("\"sensor_label\":\"") + 16;
+  if (labelStart != 15) {
+    int labelEnd = json.indexOf("\"", labelStart);
+    sensorLabel = json.substring(labelStart, labelEnd);
+  } else {
+    server.send(400, "application/json", "{\"status\":\"error\",\"message\":\"'sensor_label' is required.\"}");
+    return;
+  }
+  int sensorPin = getPinFromLabel(sensorLabel);
+  if (sensorPin == 0) {
+    server.send(400, "application/json", "{\"status\":\"error\",\"message\":\"Invalid or disabled sensor label provided.\"}");
+    return;
+  }
+  
+  if (json.indexOf("\"num_readings\"") != -1) {
+    int start = json.indexOf("\"num_readings\":") + 15;
+    int end = json.indexOf(",", start); if (end == -1) end = json.indexOf("}", start);
+    int value = json.substring(start, end).toInt(); if (value > 0) numReadings = value;
+  }
+  if (json.indexOf("\"interval_ms\"") != -1) {
+    int start = json.indexOf("\"interval_ms\":") + 14;
+    int end = json.indexOf(",", start); if (end == -1) end = json.indexOf("}", start);
+    long value = json.substring(start, end).toInt(); if (value > 0) interval = value;
+  }
+
+  // --- Setup and start the non-blocking task ---
+  _smoothHumi_sensorPin_task = sensorPin;
+  _smoothHumi_sensorLabel_task = sensorLabel;
+  _smoothHumi_numReadings_task = numReadings;
+  _smoothHumi_interval_task = interval;
+  _smoothHumi_readingsTaken = 0;
+  _smoothHumi_rawSum = 0;
+  _smoothHumi_mappedSum = 0;
+  _smoothHumi_lastReadMillis = millis() - interval; // Trigger first read immediately in the next loop
+  _smoothHumi_result_isNew = false; // Invalidate old result
+  _smoothHumi_task_running = true;
+
+  Serial.print("Starting non-blocking smooth reading for "); Serial.print(sensorLabel); Serial.println("...");
+  server.send(202, "application/json", "{\"status\":\"accepted\",\"message\":\"Smooth reading task started. Check the /api endpoint for results later.\"}");
+}
+
 int getPinFromLabel(String label) {
-  if (humiSensA_enabled && label.equals(humiSensA_label)) {
-    return humiSensA_pin;
-  }
-  if (humiSensB_enabled && label.equals(humiSensB_label)) {
-    return humiSensB_pin;
-  }
+  if (humiSensA_enabled && label.equals(humiSensA_label)) return humiSensA_pin;
+  if (humiSensB_enabled && label.equals(humiSensB_label)) return humiSensB_pin;
   return 0;
 }
 
-/**
- * @brief Generates a JSON response with the current system state.
- */
 String generateJsonResponse() {
   String json = "{";
   json += "\"uptime_seconds\":" + String(millis() / 1000) + ",";
@@ -720,14 +655,13 @@ String generateJsonResponse() {
   json += "\"servo_enabled\":" + String(servo_enabled ? "true" : "false") + ",";
   json += "\"humiTask_enabled\":" + String(humiTask_enabled ? "true" : "false");
   json += "},";
-  json += "\"enabled_sensors\":" + getEnabledSensorsJson();
+  json += "\"enabled_sensors\":" + getEnabledSensorsJson() + ",";
+  json += "\"smooth_humi_task_running\":" + String(_smoothHumi_task_running ? "true" : "false") + ",";
+  json += "\"last_smooth_humi_result\":" + generateSmoothHumiResultJson();
   json += "}";
   return json;
 }
 
-/**
- * @brief Generates JSON for enabled sensors and their labels.
- */
 String getEnabledSensorsJson() {
   String json = "[";
   bool first = true;
@@ -745,9 +679,6 @@ String getEnabledSensorsJson() {
   return json;
 }
 
-/**
- * @brief Generates JSON for the smooth humidity reading defaults.
- */
 String generateSmoothHumiDefaultsJson() {
   String json = "{";
   json += "\"readings\":" + String(smoothRead_defaults_readings) + ",";
@@ -756,38 +687,38 @@ String generateSmoothHumiDefaultsJson() {
   return json;
 }
 
+/**
+ * @brief Generates JSON for the result of the last completed smooth humidity reading.
+ */
+String generateSmoothHumiResultJson() {
+  if (!_smoothHumi_result_isNew) {
+    return "null";
+  }
+  String json = "{";
+  json += "\"sensor_label\":\"" + _smoothHumi_result_label + "\",";
+  json += "\"average_raw_value\":" + String(_smoothHumi_result_rawAvg, 2) + ",";
+  json += "\"average_humidity_percent\":" + String(_smoothHumi_result_mappedAvg, 2);
+  json += "}";
+  return json;
+}
+
 // --- Setup and Loop Functions ---
 
-/**
- * @brief Initializes the ESP32 hardware pins and preferences.
- */
 void setup(void) {
   Serial.begin(115200);
-  Serial.println(F("\nESP32 Booting..."));
+  Serial.println(F("\nESP32 Booting (Non-Blocking Version)..."));
 
-  // Load configuration from Preferences
   loadConfig();
 
-  // Initialize GPIOs based on loaded config
-  pinMode(led, OUTPUT);
-  digitalWrite(led, LOW); // Turn off LED initially
-
-  pinMode(pumpA_pin, OUTPUT);
-  digitalWrite(pumpA_pin, LOW);
-  pinMode(pumpB_pin, OUTPUT);
-  digitalWrite(pumpB_pin, LOW);
-  pinMode(pumpC_pin, OUTPUT);
-  digitalWrite(pumpC_pin, LOW);
-  
+  pinMode(led, OUTPUT); digitalWrite(led, LOW);
+  pinMode(pumpA_pin, OUTPUT); digitalWrite(pumpA_pin, LOW);
+  pinMode(pumpB_pin, OUTPUT); digitalWrite(pumpB_pin, LOW);
+  pinMode(pumpC_pin, OUTPUT); digitalWrite(pumpC_pin, LOW);
   pinMode(humiSensA_pin, INPUT);
   pinMode(humiSensB_pin, INPUT);
 
-  // Removed myServo.attach(servo_pin) from setup(). Servo will be attached only during movement.
-
-  // Start WiFi connection process
   if (savedSSID.length() > 0) {
-    Serial.print(F("Found saved credentials. Attempting to connect to "));
-    Serial.println(savedSSID);
+    Serial.print(F("Found saved credentials. Attempting to connect to ")); Serial.println(savedSSID);
     currentWiFiState = CONNECTING;
     connectToWiFi();
   } else {
@@ -797,9 +728,6 @@ void setup(void) {
   }
 }
 
-/**
- * @brief Main loop function, handles WiFi state and application tasks.
- */
 void loop(void) {
   switch (currentWiFiState) {
     case CONNECTING:
@@ -811,23 +739,23 @@ void loop(void) {
         connectionAttemptsCount++;
         Serial.print(F("Connection attempt ")); Serial.print(connectionAttemptsCount); Serial.print(F("/")); Serial.println(MAX_CONNECTION_ATTEMPTS);
         if (connectionAttemptsCount < MAX_CONNECTION_ATTEMPTS) {
-          connectToWiFi(); // Retry connection
+          connectToWiFi();
         } else {
           Serial.println(F("Max connection retries reached. Clearing credentials and starting provisioning."));
           currentWiFiState = PROVISIONING;
-          clearSavedCredentials(); // Clear saved credentials
-          startProvisioningMode(); // Go back to provisioning
+          clearSavedCredentials();
+          startProvisioningMode();
         }
       }
       break;
 
     case CONNECTED:
-      server.handleClient(); // Handle web server requests
-      handlePump();          // Manage pump tasks
-      readHumidityTask();    // Read humidity sensors periodically
-      handleServo();         // Manage servo movements
-      // Small delay to allow other tasks to run
-      delay(2);
+      server.handleClient();
+      handlePump();
+      readHumidityTask();
+      handleServo();
+      smoothHumiReadTask();
+      delay(2); // Small delay to prevent tight loop from overwhelming CPU, good practice
       break;
 
     case PROVISIONING:
@@ -835,21 +763,15 @@ void loop(void) {
       break;
 
     case NOT_PROVISIONED:
-      // This state should ideally not be reached if setup handles initial state correctly
+      // This state should not be reached if setup handles initial state correctly
       break;
   }
 }
 
 // --- Configuration Management Functions ---
 
-/**
- * @brief Loads all configuration settings from Preferences (flash memory).
- * Sets default values if a setting is not found.
- */
 void loadConfig() {
-  preferences.begin("config", true); // 'true' = read-only mode
-
-  // Load Pump Configuration
+  preferences.begin("config", true);
   pumpA_enabled = preferences.getBool("pumpA_en", true);
   pumpA_pin = preferences.getInt("pumpA_pin", 19);
   pumpB_enabled = preferences.getBool("pumpB_en", true);
@@ -857,50 +779,33 @@ void loadConfig() {
   pumpC_enabled = preferences.getBool("pumpC_en", true);
   pumpC_pin = preferences.getInt("pumpC_pin", 5);
   max_seconds_on = preferences.getInt("max_sec_on", 10);
-
-  // Load Servo Configuration
   servo_enabled = preferences.getBool("servo_en", true);
   servo_pin = preferences.getInt("servo_pin", 18);
   servo_initAngle = preferences.getInt("servo_init", 90);
   servo_finalAngle = preferences.getInt("servo_final", 150);
   servo_millisMoveDelay = preferences.getInt("servo_delay", 5);
-
-  // Load Humidity Sensor Configuration
   humiSensA_enabled = preferences.getBool("humiA_en", true);
   humiSensA_pin = preferences.getInt("humiA_pin", 35);
   humiSensA_label = preferences.getString("humiA_label", "Sensor A");
   humiSensB_enabled = preferences.getBool("humiB_en", true);
   humiSensB_pin = preferences.getInt("humiB_pin", 32);
   humiSensB_label = preferences.getString("humiB_label", "Sensor B");
-
-  // Load Humidity Task Configuration
   humiTask_enabled = preferences.getBool("humiTask_en", true);
   humiTask_interval = preferences.getLong("humiTask_int", 300);
-  
-  // Load Smooth Reading Task Defaults
   smoothRead_defaults_readings = preferences.getInt("smooth_readings", 5);
   smoothRead_defaults_interval = preferences.getLong("smooth_interval", 1000);
-
-  // Load Network Configuration
   esp_hostname = preferences.getString("hostname", "esp32");
-
-  // Load WiFi credentials (from "settings" namespace)
-  preferences.end(); // Close "config" namespace
-  preferences.begin("settings", true); // Open "settings" namespace
+  preferences.end();
+  
+  preferences.begin("settings", true);
   savedSSID = preferences.getString("ssid", "");
   savedPassword = preferences.getString("password", "");
-  preferences.end(); // Close "settings" namespace
-
+  preferences.end();
   Serial.println(F("Configuration loaded."));
 }
 
-/**
- * @brief Saves all current configuration settings to Preferences (flash memory).
- */
 void saveConfig() {
-  preferences.begin("config", false); // read/write mode
-
-  // Save Pump Configuration
+  preferences.begin("config", false);
   preferences.putBool("pumpA_en", pumpA_enabled);
   preferences.putInt("pumpA_pin", pumpA_pin);
   preferences.putBool("pumpB_en", pumpB_enabled);
@@ -908,88 +813,55 @@ void saveConfig() {
   preferences.putBool("pumpC_en", pumpC_enabled);
   preferences.putInt("pumpC_pin", pumpC_pin);
   preferences.putInt("max_sec_on", max_seconds_on);
-
-  // Save Servo Configuration
   preferences.putBool("servo_en", servo_enabled);
   preferences.putInt("servo_pin", servo_pin);
   preferences.putInt("servo_init", servo_initAngle);
   preferences.putInt("servo_final", servo_finalAngle);
   preferences.putInt("servo_delay", servo_millisMoveDelay);
-
-  // Save Humidity Sensor Configuration
   preferences.putBool("humiA_en", humiSensA_enabled);
   preferences.putInt("humiA_pin", humiSensA_pin);
   preferences.putString("humiA_label", humiSensA_label);
   preferences.putBool("humiB_en", humiSensB_enabled);
   preferences.putInt("humiB_pin", humiSensB_pin);
   preferences.putString("humiB_label", humiSensB_label);
-
-  // Save Humidity Task Configuration
   preferences.putBool("humiTask_en", humiTask_enabled);
   preferences.putLong("humiTask_int", humiTask_interval);
-  
-  // Save Smooth Reading Task Defaults
   preferences.putInt("smooth_readings", smoothRead_defaults_readings);
   preferences.putLong("smooth_interval", smoothRead_defaults_interval);
-
-  // Save Network Configuration
   preferences.putString("hostname", esp_hostname);
-
   preferences.end();
   Serial.println(F("Configuration saved."));
 }
 
-
 // --- WiFi Management Functions ---
 
-/**
- * @brief Attempts to connect to WiFi using saved credentials.
- */
 void connectToWiFi() {
   WiFi.mode(WIFI_STA);
   WiFi.begin(savedSSID.c_str(), savedPassword.c_str());
   lastConnectionAttemptMillis = millis();
 }
 
-/**
- * @brief Starts the WiFi provisioning mode.
- */
 void startProvisioningMode() {
-  // Configure the WiFiProvisioner instance
   provisioner.getConfig().SHOW_INPUT_FIELD = false;
   provisioner.getConfig().SHOW_RESET_FIELD = false;
-
-  // Set the success callback for provisioning
   provisioner.onSuccess(
     [](const char *ssid, const char *password, const char *input) {
       Serial.printf("Provisioning successful! Connected to SSID: %s\n", ssid);
-      // Save credentials to Preferences (using "settings" namespace)
-      preferences.begin("settings", false); // read/write
+      preferences.begin("settings", false);
       preferences.putString("ssid", ssid);
-      if (password) {
-        preferences.putString("password", password);
-      } else {
-        preferences.remove("password"); // Clear password if none provided
-      }
+      if (password) { preferences.putString("password", password); }
+      else { preferences.remove("password"); }
       preferences.end();
-
-      savedSSID = ssid; // Update global savedSSID
-      savedPassword = password ? String(password) : F(""); // Update global savedPassword
-
-      // Set state to CONNECTING, loop() will handle the actual connection check
+      savedSSID = ssid;
+      savedPassword = password ? String(password) : F("");
       currentWiFiState = CONNECTING;
-      connectionAttemptsCount = 0; // Reset attempts for new connection
-      lastConnectionAttemptMillis = millis(); // Reset timer for new connection
+      connectionAttemptsCount = 0;
+      lastConnectionAttemptMillis = millis();
     });
-
-  // Start provisioning
   provisioner.startProvisioning();
   Serial.println(F("WiFi Provisioning started. Connect to AP 'ESP_PROV' and navigate to 192.168.4.1"));
 }
 
-/**
- * @brief Clears saved WiFi credentials from Preferences.
- */
 void clearSavedCredentials() {
   preferences.begin("settings", false);
   preferences.remove("ssid");
@@ -1000,34 +872,31 @@ void clearSavedCredentials() {
   Serial.println(F("Cleared saved WiFi credentials from flash."));
 }
 
-/**
- * @brief Initializes web server routes and starts MDNS.
- * This function is called ONLY when WiFi is successfully connected.
- */
-void startApplicationServices() {
-  Serial.print(F("IP address: "));
-  Serial.println(WiFi.localIP());
+void handleResetProvisioning() {
+  server.send(200, F("text/plain"), F("WiFi credentials cleared. The device will now reboot into provisioning mode."));
+  delay(1000);
+  clearSavedCredentials();
+  ESP.restart();
+}
 
-  // Use the configurable hostname for mDNS
+void startApplicationServices() {
+  Serial.print(F("IP address: ")); Serial.println(WiFi.localIP());
   if (MDNS.begin(esp_hostname.c_str())) {
-    Serial.print(F("MDNS responder started at "));
-    Serial.print(esp_hostname);
-    Serial.println(F(".local"));
-  } else {
-    Serial.println(F("Error starting MDNS responder!"));
-  }
+    Serial.print(F("MDNS responder started at http://")); Serial.print(esp_hostname); Serial.println(F(".local"));
+  } else { Serial.println(F("Error starting MDNS responder!")); }
 
   server.on(F("/"), handleRoot);
   server.on(F("/watering_pumps"), handleWateringPumps);
   server.on(F("/servo_ctrl"), handleServoCtrl);
-  server.on(F("/config"), HTTP_GET, handleConfig); // Handle GET for displaying config
-  server.on(F("/config"), HTTP_POST, handleConfig); // Handle POST for saving config
+  server.on(F("/config"), HTTP_GET, handleConfig);
+  server.on(F("/config"), HTTP_POST, handleConfig);
   server.on(F("/setMessage"), HTTP_POST, handleSetMessage);
   server.on(F("/api"), handleApi);
-  server.on(F("/api/smooth_humi"), HTTP_GET, handleSmoothHumi);
-  server.on(F("/api/smooth_humi"), HTTP_POST, handleSmoothHumi);
+  server.on(F("/api/smooth_humi/settings"), HTTP_GET, handleSmoothHumiSettings);
+  server.on(F("/api/smooth_humi/settings"), HTTP_POST, handleSmoothHumiSettings);
+  server.on(F("/api/smooth_humi/read"), HTTP_POST, handleSmoothHumiRead);
+  server.on(F("/reset_wifi"), HTTP_POST, handleResetProvisioning);
   server.onNotFound(handleNotFound);
-
   server.begin();
   Serial.println(F("HTTP server started"));
 }
@@ -1035,35 +904,62 @@ void startApplicationServices() {
 // --- Application Task Functions ---
 
 /**
- * @brief Handles servo movement based on scheduled flag.
- * Respects servo enable flag and configured parameters.
- * Servo is attached only for the duration of the movement.
+ * @brief Handles servo movement using a non-blocking state machine.
+ * This function is called on every loop and moves the servo one step at a time.
  */
 void handleServo(){
-  if(_global_sched_button && servo_enabled){
-    myServo.attach(servo_pin); // Attach only when needed
-    Serial.println(F("Moving servo..."));
-
-    for (int angle = servo_initAngle; angle <= servo_finalAngle; angle++) {
-      myServo.write(angle);
-      delay(servo_millisMoveDelay);
+  if (!servo_enabled) {
+    if (servoState != SERVO_IDLE) { // Cleanup if disabled mid-movement
+      myServo.detach();
+      servoState = SERVO_IDLE;
     }
+    return;
+  }
 
-    for (int angle = servo_finalAngle; angle >= servo_initAngle; angle--) {
-      myServo.write(angle);
-      delay(servo_millisMoveDelay);
-    }
+  // Check for a trigger to start the movement sequence
+  if (_global_sched_button && servoState == SERVO_IDLE) {
+    _global_sched_button = false; // Consume the trigger
+    myServo.attach(servo_pin);
+    servoCurrentAngle = servo_initAngle;
+    myServo.write(servoCurrentAngle);
+    servoState = SERVO_MOVING_TO_FINAL;
+    servoLastMoveMillis = millis();
+    Serial.println(F("Starting non-blocking servo movement..."));
+  }
 
-    Serial.println(F("Movement complete."));
-    _global_sched_button = false;
-    myServo.detach(); // Detach to save power and prevent jitter
+  unsigned long currentMillis = millis();
+  if (currentMillis - servoLastMoveMillis < servo_millisMoveDelay) {
+    return; // Not time to move yet
+  }
+  servoLastMoveMillis = currentMillis;
+
+  switch (servoState) {
+    case SERVO_MOVING_TO_FINAL:
+      if (servoCurrentAngle < servo_finalAngle) {
+        servoCurrentAngle++;
+        myServo.write(servoCurrentAngle);
+      } else {
+        servoState = SERVO_MOVING_TO_INIT; // Reached final, move back
+      }
+      break;
+    
+    case SERVO_MOVING_TO_INIT:
+      if (servoCurrentAngle > servo_initAngle) {
+        servoCurrentAngle--;
+        myServo.write(servoCurrentAngle);
+      } else {
+        myServo.detach(); // Movement complete
+        servoState = SERVO_IDLE;
+        Serial.println(F("Non-blocking servo movement complete."));
+      }
+      break;
+
+    case SERVO_IDLE:
+    default:
+      break; // Do nothing
   }
 }
 
-/**
- * @brief Manages pump operation based on scheduled task.
- * Uses configurable pump pins and max_seconds_on.
- */
 void handlePump(){
   if(_global_sched_pump_task){
     if(!_pump_task_lock){
@@ -1085,16 +981,47 @@ void handlePump(){
   }
 }
 
-/**
- * @brief Periodically reads humidity sensors.
- * Respects humidity task enable flag and interval.
- */
 void readHumidityTask(){
   if (humiTask_enabled) {
     unsigned long _curr_millis = millis();
     if( ( _curr_millis - _previous_millis_read_sensors )>= humiTask_interval){
       readHumidity();
       _previous_millis_read_sensors = _curr_millis;
+    }
+  }
+}
+
+/**
+ * @brief Performs one step of the smooth humidity reading task.
+ * Called on every loop, it takes readings at the specified interval without blocking.
+ */
+void smoothHumiReadTask() {
+  if (!_smoothHumi_task_running) {
+    return;
+  }
+
+  unsigned long currentMillis = millis();
+  if (currentMillis - _smoothHumi_lastReadMillis >= _smoothHumi_interval_task) {
+    _smoothHumi_lastReadMillis = currentMillis;
+
+    int raw = analogRead(_smoothHumi_sensorPin_task);
+    int mapped = map(raw, 2300, 4095, 100, 0);
+    _smoothHumi_rawSum += raw;
+    _smoothHumi_mappedSum += mapped;
+    _smoothHumi_readingsTaken++;
+    
+    Serial.printf("Smooth read %d/%d for %s\n", _smoothHumi_readingsTaken, _smoothHumi_numReadings_task, _smoothHumi_sensorLabel_task.c_str());
+
+    if (_smoothHumi_readingsTaken >= _smoothHumi_numReadings_task) {
+      // Task is complete, calculate and store results
+      _smoothHumi_result_rawAvg = (float)_smoothHumi_rawSum / _smoothHumi_numReadings_task;
+      _smoothHumi_result_mappedAvg = (float)_smoothHumi_mappedSum / _smoothHumi_numReadings_task;
+      _smoothHumi_result_label = _smoothHumi_sensorLabel_task;
+      _smoothHumi_result_isNew = true; // Flag that new data is available for the API
+
+      // Reset task state
+      _smoothHumi_task_running = false;
+      Serial.println("Smooth humidity reading task finished.");
     }
   }
 }
