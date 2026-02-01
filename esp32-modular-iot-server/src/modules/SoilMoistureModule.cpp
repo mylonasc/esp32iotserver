@@ -4,6 +4,8 @@
 static uint32_t nowMs() { return millis(); }
 
 void SoilMoistureModule::begin(AppContext& ctx) {
+  ctx_ = &ctx;
+  
   soil_.begin(ctx.config.soil);
 }
 
@@ -12,7 +14,31 @@ void SoilMoistureModule::loop(AppContext& ctx) {
   soil_.loop();
 }
 
+void SoilMoistureModule::appendApiStatusObject(AppContext& ctx, String& json) {
+  (void)ctx;
+  json += "{";
+  json += "\"api\":\"/api/soil\",";
+  json += "\"ui\":\"/soil\",";
+  json += "\"enabledCount\":";
+  int enabled = 0;
+  if (soil_.r0().enabled) enabled++;
+  if (soil_.r1().enabled) enabled++;
+  if (soil_.r2().enabled) enabled++;
+  json += String(enabled);
+  json += "}";
+}
+
+void SoilMoistureModule::appendModuleInfoObject(AppContext& ctx, String& json) {
+  (void)ctx;
+  json += "{";
+  json += "\"name\":\"soil\",";
+  json += "\"ui\":\"/soil\",";
+  json += "\"api\":\"/api/soil\"";
+  json += "}";
+}
+
 void SoilMoistureModule::registerRoutes(AppContext& ctx) {
+  ctx_ = &ctx;
   ctx.server.on("/soil", HTTP_GET, [&ctx, this]() { handleSoilPage_(ctx); });
   ctx.server.on("/api/soil", HTTP_GET, [&ctx, this]() { handleSoilApi_(ctx); });
 }

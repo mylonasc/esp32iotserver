@@ -55,23 +55,21 @@ AppConfig ConfigStore::load() {
 void ConfigStore::save(const AppConfig& cfg) {
   Preferences p;
 
-  // CONFIG namespace
+  // All "config" keys in one begin/end
   p.begin(NS_CONFIG, false);
+
   p.putString("hostname", cfg.hostname);
 
+  // pumps
   p.putBool("pumpA_en", cfg.pumps.enabledA);
   p.putInt ("pumpA_pin", cfg.pumps.pinA);
-
   p.putBool("pumpB_en", cfg.pumps.enabledB);
   p.putInt ("pumpB_pin", cfg.pumps.pinB);
-
   p.putBool("pumpC_en", cfg.pumps.enabledC);
   p.putInt ("pumpC_pin", cfg.pumps.pinC);
+  p.putInt ("max_sec_on", cfg.pumps.maxSecondsOn);
 
-  p.putInt("max_sec_on", cfg.pumps.maxSecondsOn);
-  p.end();
-
-    // Soil config
+  // soil
   p.putUInt("soil_int", cfg.soil.intervalMs);
   p.putInt ("soil_wet", cfg.soil.wetRaw);
   p.putInt ("soil_dry", cfg.soil.dryRaw);
@@ -88,13 +86,13 @@ void ConfigStore::save(const AppConfig& cfg) {
   p.putInt ("soil2_pin", cfg.soil.s2.pin);
   p.putString("soil2_id", cfg.soil.s2.id);
 
+  p.end();
 
-  // SETTINGS namespace
+  // WiFi credentials in "settings"
   p.begin(NS_SETTINGS, false);
   p.putString("ssid", cfg.ssid);
   p.putString("password", cfg.password);
   p.end();
-  
 
   Serial.println("Config saved.");
 }

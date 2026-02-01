@@ -13,7 +13,6 @@
 #include "modules/PumpModule.h"
 #include "modules/SoilMoistureModule.h"
 
-
 WebServer server(80);
 
 ConfigStore configStore;
@@ -21,16 +20,69 @@ AppConfig config;
 
 WifiManager wifi;
 ModuleManager modules;
+
+// modules must exist before WebUi if WebUi stores a reference/pointer to modules
 WebUi ui(modules);
 
-// Install modules here
+// module instances must be global/static
 PumpModule pumpModule;
 SoilMoistureModule soilModule;
+
+// ctx must be global/static (and come AFTER its referenced objects exist)
+AppContext ctx{ server, configStore, config, wifi };
+
 
 
 bool servicesStarted = false;
 
-void startServices(AppContext& ctx) {
+static void registerCoreApiRoutes() {
+  // Combined API endpoint
+  server.on("/api", HTTP_GET, []() {
+    String json;
+    json.reserve(1024);
+
+    json += "{";
+    json += "\"uptime_seconds\":";
+    json += String(millis() / 1000);
+    json += ",";
+
+    json += "\"wifi_status\":\"";
+    json += (WiFi.status() == WL_CONNECTED ? "connected" : "not_connected");
+    json += "\",";
+
+    json += "\"ip\":\"";
+    json += (WiFi.status() == WL_CONNECTED ? WiFi.localIP().toString() : String(""));
+    json += "\",";
+
+    json += "\"hostname\":\"";
+    json += ctx.config.hostname;
+    json += "\",";
+
+    json += "\"modules\":{";
+    modules.appendAllApiStatus(ctx, json);
+    json += "}";
+
+    json += "}";
+
+    server.send(200, "application/json", json);
+  });
+
+  // Module registry endpoint
+  server.on("/api/modules", HTTP_GET, []() {
+    String json;
+    json.reserve(512);
+
+    json += "{";
+    json += "\"modules\":[";
+    modules.appendAllModuleInfo(ctx, json);
+    json += "]";
+    json += "}";
+
+    server.send(200, "application/json", json);
+  });
+}
+
+static void startServicesOnce() {
   if (servicesStarted) return;
   servicesStarted = true;
 
@@ -44,11 +96,23 @@ void startServices(AppContext& ctx) {
     }
   }
 
-  // Core routes
+  // Core UI routes
   ui.registerRoutes(ctx);
 
   // Module routes
   modules.registerAllRoutes(ctx);
+
+  // Core API routes (aggregated)
+  registerCoreApiRoutes();
+
+  // Avoid WebServer "handler not found" spam (favicon, etc.)
+  server.onNotFound([]() {
+    if (server.uri() == "/favicon.ico") {
+      server.send(204, "image/x-icon", "");
+      return;
+    }
+    server.send(404, "text/plain", "Not found: " + server.uri() + "\n");
+  });
 
   server.begin();
   Serial.println("HTTP server started");
@@ -62,14 +126,11 @@ void setup() {
 
   config = configStore.load();
 
-  // Build context (references)
-  AppContext ctx { server, configStore, config, wifi };
-
   // Install modules
   modules.add(pumpModule);
   modules.add(soilModule);
 
-  // Initialize modules early so pins are safe even before WiFi
+  // Initialize modules early for pin safety
   modules.beginAll(ctx);
 
   // Start WiFi with provisioning fallback
@@ -77,16 +138,13 @@ void setup() {
 }
 
 void loop() {
-  AppContext ctx { server, configStore, config, wifi };
-
   wifi.loop();
 
-  // Always tick modules (non-blocking)
+  // Always tick modules
   modules.loopAll(ctx);
 
-  // Only start/serve HTTP app when connected
   if (wifi.state() == WifiManager::State::CONNECTED) {
-    startServices(ctx);
+    startServicesOnce();
     server.handleClient();
   }
 

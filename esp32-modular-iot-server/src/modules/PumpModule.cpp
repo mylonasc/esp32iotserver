@@ -2,6 +2,7 @@
 #include "Html.h"
 
 void PumpModule::begin(AppContext& ctx) {
+  ctx_ = &ctx;
   pumps_.begin(ctx.config.pumps);
 }
 
@@ -11,6 +12,9 @@ void PumpModule::loop(AppContext& ctx) {
 }
 
 void PumpModule::registerRoutes(AppContext& ctx) {
+  ctx_ = &ctx;
+  ctx.server.on("/watering_pumps", HTTP_GET, [this]() { handlePumpsPage_(*ctx_); });
+  ctx.server.on("/api/pumps", HTTP_GET, [this]() { handlePumpsApi_(*ctx_); });
   ctx.server.on("/watering_pumps", HTTP_GET, [&ctx, this]() { handlePumpsPage_(ctx); });
   ctx.server.on("/api/pumps", HTTP_GET, [&ctx, this]() { handlePumpsApi_(ctx); });
 }
@@ -52,6 +56,29 @@ void PumpModule::renderConfig(AppContext& ctx, String& html) {
   html += "<input type='number' name='pump_max' min='1' max='600' value='" + String(p.maxSecondsOn) + "'>";
 
   html += "</div>";
+}
+
+void PumpModule::appendApiStatusObject(AppContext& ctx, String& json) {
+  (void)ctx;
+  json += "{";
+  json += "\"running\":";
+  json += (pumps_.isRunning() ? "true" : "false");
+  json += ",";
+  json += "\"activePin\":";
+  json += String(pumps_.activePin());
+  json += ",";
+  json += "\"remainingSeconds\":";
+  json += String(pumps_.remainingSeconds(), 2);
+  json += "}";
+}
+
+void PumpModule::appendModuleInfoObject(AppContext& ctx, String& json) {
+  (void)ctx;
+  json += "{";
+  json += "\"name\":\"pumps\",";
+  json += "\"ui\":\"/watering_pumps\",";
+  json += "\"api\":\"/api/pumps\"";
+  json += "}";
 }
 
 void PumpModule::handleConfigPost(AppContext& ctx) {

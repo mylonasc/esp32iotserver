@@ -1,10 +1,10 @@
 #pragma once
 #include "IModule.h"
-#include "devices/PumpController.h"
 
-class PumpModule : public IModule {
+// Rename TemplateModule -> YourModuleName
+class TemplateModule : public IModule {
 public:
-  const char* name() const override { return "pumps"; }
+  const char* name() const override { return "template"; }
 
   void begin(AppContext& ctx) override;
   void loop(AppContext& ctx) override;
@@ -13,12 +13,15 @@ public:
   void renderHome(AppContext& ctx, String& html) override;
   void renderConfig(AppContext& ctx, String& html) override;
   void handleConfigPost(AppContext& ctx) override;
+
   void appendApiStatusObject(AppContext& ctx, String& json) override;
   void appendModuleInfoObject(AppContext& ctx, String& json) override;
 
 private:
-  PumpController pumps_;
   AppContext* ctx_ = nullptr;
-  void handlePumpsPage_(AppContext& ctx);
-  void handlePumpsApi_(AppContext& ctx);
+
+  // Optional: your internal state / device controller objects go here
+
+  void handleUiPage_(AppContext& ctx);
+  void handleApi_(AppContext& ctx);
 };
