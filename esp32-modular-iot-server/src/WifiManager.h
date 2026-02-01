@@ -15,6 +15,9 @@ public:
   void resetToProvisioning();
 
 private:
+  volatile bool gotProvision_ = false;
+  String pendingSsid_;
+  String pendingPass_;
   AppConfig* cfg_ = nullptr;
   ConfigStore* store_ = nullptr;
 

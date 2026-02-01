@@ -10,8 +10,9 @@ AppConfig ConfigStore::load() {
   AppConfig cfg;
   Preferences p;
 
-  // CONFIG namespace (hostname + pumps)
-  p.begin(NS_CONFIG, true);
+  // CONFIG namespace (hostname + pumps + soil)
+  p.begin(NS_CONFIG, false);
+
   cfg.hostname = p.getString("hostname", "esp32");
 
   cfg.pumps.enabledA = p.getBool("pumpA_en", true);
@@ -24,8 +25,8 @@ AppConfig ConfigStore::load() {
   cfg.pumps.pinC     = p.getInt ("pumpC_pin", 5);
 
   cfg.pumps.maxSecondsOn = p.getInt("max_sec_on", 10);
-  p.end();
 
+  // soil (MOVED UP before p.end())
   cfg.soil.intervalMs = p.getUInt("soil_int", 300);
   cfg.soil.wetRaw     = p.getInt ("soil_wet", 2300);
   cfg.soil.dryRaw     = p.getInt ("soil_dry", 4095);
@@ -42,8 +43,10 @@ AppConfig ConfigStore::load() {
   cfg.soil.s2.pin     = p.getInt ("soil2_pin", 33);
   cfg.soil.s2.id      = p.getString("soil2_id", "plant_c");
 
+  p.end();
+
   // SETTINGS namespace (wifi)
-  p.begin(NS_SETTINGS, true);
+  p.begin(NS_SETTINGS, false);
   cfg.ssid = p.getString("ssid", "");
   cfg.password = p.getString("password", "");
   p.end();
@@ -51,6 +54,7 @@ AppConfig ConfigStore::load() {
   Serial.println("Config loaded.");
   return cfg;
 }
+
 
 void ConfigStore::save(const AppConfig& cfg) {
   Preferences p;

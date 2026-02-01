@@ -13,6 +13,17 @@
 #include "modules/PumpModule.h"
 #include "modules/SoilMoistureModule.h"
 
+#include "esp_heap_caps.h"
+
+static void printHeap(const char* tag) {
+  Serial.printf("[%s] free heap: %u, min free heap: %u, largest block: %u\n",
+                tag,
+                ESP.getFreeHeap(),
+                ESP.getMinFreeHeap(),
+                heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+}
+
+
 WebServer server(80);
 
 ConfigStore configStore;
@@ -30,7 +41,6 @@ SoilMoistureModule soilModule;
 
 // ctx must be global/static (and come AFTER its referenced objects exist)
 AppContext ctx{ server, configStore, config, wifi };
-
 
 
 bool servicesStarted = false;
@@ -119,6 +129,7 @@ static void startServicesOnce() {
 }
 
 void setup() {
+  printHeap("boot");
   Serial.begin(115200);
   delay(50);
   Serial.println();
@@ -139,6 +150,18 @@ void setup() {
 
 void loop() {
   wifi.loop();
+
+  if (wifi.state() == WifiManager::State::PROVISIONING) {
+    ctx.runLevel = RunLevel::PROVISIONING;
+    // optionally do NOTHING else
+    delay(2);
+    return;
+  }
+
+  ctx.runLevel = (wifi.state() == WifiManager::State::CONNECTED)
+    ? RunLevel::CONNECTED
+    : RunLevel::CONNECTING;
+
 
   // Always tick modules
   modules.loopAll(ctx);
