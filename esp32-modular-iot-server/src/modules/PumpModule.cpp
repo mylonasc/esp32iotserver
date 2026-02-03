@@ -1,6 +1,58 @@
 #include "PumpModule.h"
 #include "Html.h"
+#include <Arduino.h>
+#include <string.h>   // strlcpy (ESP32 has it), memcpy
 
+// ----------------------------
+// Local HtmlOut helper (streams to WebServer via sendContent)
+// ----------------------------
+#include <WebServer.h>
+
+class HtmlOut {
+public:
+  explicit HtmlOut(WebServer& s) : s_(s) {}
+
+  void begin(const __FlashStringHelper* title) {
+    s_.setContentLength(CONTENT_LENGTH_UNKNOWN);
+    s_.send(200, "text/html", "");
+    s_.sendContent(htmlHeader(title));
+  }
+
+  void end() {
+    s_.sendContent(htmlFooter());
+    s_.client().stop();
+  }
+
+  void p(const __FlashStringHelper* t) { s_.sendContent(t); }
+  void p(const char* t)                { s_.sendContent(t); }
+  void p(const String& t)              { s_.sendContent(t); }
+
+  void pChar(char c) {
+    char buf[2] = {c, 0};
+    s_.sendContent(buf);
+  }
+
+  void pInt(int v) {
+    char buf[16];
+    itoa(v, buf, 10);
+    s_.sendContent(buf);
+  }
+
+  void pFloat(float v, int decimals) {
+    char buf[24];
+    dtostrf(v, 0, decimals, buf);
+    char* p = buf;
+    while (*p == ' ') ++p;
+    s_.sendContent(p);
+  }
+
+private:
+  WebServer& s_;
+};
+
+// ----------------------------
+// PumpModule public API
+// ----------------------------
 void PumpModule::begin(AppContext& ctx) {
   ctx_ = &ctx;
   pumps_.begin(ctx.config.pumps);
@@ -13,72 +65,85 @@ void PumpModule::loop(AppContext& ctx) {
 
 void PumpModule::registerRoutes(AppContext& ctx) {
   ctx_ = &ctx;
-  ctx.server.on("/watering_pumps", HTTP_GET, [this]() { handlePumpsPage_(*ctx_); });
-  ctx.server.on("/api/pumps", HTTP_GET, [this]() { handlePumpsApi_(*ctx_); });
-  ctx.server.on("/watering_pumps", HTTP_GET, [&ctx, this]() { handlePumpsPage_(ctx); });
-  ctx.server.on("/api/pumps", HTTP_GET, [&ctx, this]() { handlePumpsApi_(ctx); });
+
+  // Capture only `this` (no reference capture to stack variables)
+  ctx.server.on("/watering_pumps", HTTP_GET, [this]() {
+    handlePumpsPage_(*ctx_);
+  });
+
+  ctx.server.on("/api/pumps", HTTP_GET, [this]() {
+    handlePumpsApi_(*ctx_);
+  });
 }
 
-void PumpModule::renderHome(AppContext& ctx, String& html) {
+// Print-based fragment: Home tile
+void PumpModule::renderHome(AppContext& ctx, Print& out) {
   (void)ctx;
-  html += "<div class='box'>";
-  html += "<b>Pumps</b><br>";
-  html += "Running: " + String(pumps_.isRunning() ? "Yes" : "No");
-  html += "<br>Remaining: " + String(pumps_.remainingSeconds(), 1) + " s";
-  html += "<br><a href='/watering_pumps'>Open</a>";
-  html += "</div>";
+
+  out.print(F("<div class='box'>"));
+  out.print(F("<b>Pumps</b><br>"));
+
+  out.print(F("Running: "));
+  out.print(pumps_.isRunning() ? F("Yes") : F("No"));
+
+  out.print(F("<br>Remaining: "));
+  // no-heap float formatting:
+  char buf[24];
+  dtostrf(pumps_.remainingSeconds(), 0, 1, buf);
+  char* p = buf; while (*p == ' ') ++p;
+  out.print(p);
+  out.print(F(" s"));
+
+  out.print(F("<br><a href='/watering_pumps'>Open</a>"));
+  out.print(F("</div>"));
 }
 
-void PumpModule::renderConfig(AppContext& ctx, String& html) {
+// Print-based fragment: Config section
+void PumpModule::renderConfig(AppContext& ctx, Print& out) {
   auto& p = ctx.config.pumps;
 
-  html += "<div class='box'><h3>Pumps</h3>";
+  auto printInt = [&](int v) {
+    char b[16];
+    itoa(v, b, 10);
+    out.print(b);
+  };
 
-  html += "<label><input type='checkbox' name='pumpA_en' ";
-  html += (p.enabledA ? "checked" : "");
-  html += "> Enable Pump A</label>";
-  html += "<label>Pump A pin</label>";
-  html += "<input type='number' name='pumpA_pin' value='" + String(p.pinA) + "'>";
+  out.print(F("<div class='box'><h3>Pumps</h3>"));
 
-  html += "<label><input type='checkbox' name='pumpB_en' ";
-  html += (p.enabledB ? "checked" : "");
-  html += "> Enable Pump B</label>";
-  html += "<label>Pump B pin</label>";
-  html += "<input type='number' name='pumpB_pin' value='" + String(p.pinB) + "'>";
+  // A
+  out.print(F("<label><input type='checkbox' name='pumpA_en' "));
+  if (p.enabledA) out.print(F("checked"));
+  out.print(F("> Enable Pump A</label>"));
+  out.print(F("<label>Pump A pin</label>"));
+  out.print(F("<input type='number' name='pumpA_pin' value='"));
+  printInt(p.pinA);
+  out.print(F("'>"));
 
-  html += "<label><input type='checkbox' name='pumpC_en' ";
-  html += (p.enabledC ? "checked" : "");
-  html += "> Enable Pump C</label>";
-  html += "<label>Pump C pin</label>";
-  html += "<input type='number' name='pumpC_pin' value='" + String(p.pinC) + "'>";
+  // B
+  out.print(F("<label><input type='checkbox' name='pumpB_en' "));
+  if (p.enabledB) out.print(F("checked"));
+  out.print(F("> Enable Pump B</label>"));
+  out.print(F("<label>Pump B pin</label>"));
+  out.print(F("<input type='number' name='pumpB_pin' value='"));
+  printInt(p.pinB);
+  out.print(F("'>"));
 
-  html += "<label>Max seconds on</label>";
-  html += "<input type='number' name='pump_max' min='1' max='600' value='" + String(p.maxSecondsOn) + "'>";
+  // C
+  out.print(F("<label><input type='checkbox' name='pumpC_en' "));
+  if (p.enabledC) out.print(F("checked"));
+  out.print(F("> Enable Pump C</label>"));
+  out.print(F("<label>Pump C pin</label>"));
+  out.print(F("<input type='number' name='pumpC_pin' value='"));
+  printInt(p.pinC);
+  out.print(F("'>"));
 
-  html += "</div>";
-}
+  // max seconds
+  out.print(F("<label>Max seconds on</label>"));
+  out.print(F("<input type='number' name='pump_max' min='1' max='600' value='"));
+  printInt(p.maxSecondsOn);
+  out.print(F("'>"));
 
-void PumpModule::appendApiStatusObject(AppContext& ctx, String& json) {
-  (void)ctx;
-  json += "{";
-  json += "\"running\":";
-  json += (pumps_.isRunning() ? "true" : "false");
-  json += ",";
-  json += "\"activePin\":";
-  json += String(pumps_.activePin());
-  json += ",";
-  json += "\"remainingSeconds\":";
-  json += String(pumps_.remainingSeconds(), 2);
-  json += "}";
-}
-
-void PumpModule::appendModuleInfoObject(AppContext& ctx, String& json) {
-  (void)ctx;
-  json += "{";
-  json += "\"name\":\"pumps\",";
-  json += "\"ui\":\"/watering_pumps\",";
-  json += "\"api\":\"/api/pumps\"";
-  json += "}";
+  out.print(F("</div>"));
 }
 
 void PumpModule::handleConfigPost(AppContext& ctx) {
@@ -96,64 +161,173 @@ void PumpModule::handleConfigPost(AppContext& ctx) {
   if (s.hasArg("pump_max")) {
     int v = s.arg("pump_max").toInt();
     if (v < 1) v = 1;
+    if (v > 600) v = 600; // match UI constraint
     p.maxSecondsOn = v;
   }
 
-  // Apply immediately (so after reboot or even before, config is consistent)
   pumps_.begin(p);
 }
 
-void PumpModule::handlePumpsPage_(AppContext& ctx) {
-  String html = htmlHeader("Pumps");
-  html += "<h2>Watering Pumps</h2>";
+// Print-based JSON object: {"running":true,...}
+void PumpModule::writeApiStatusObject(AppContext& ctx, Print& out) {
+  (void)ctx;
 
-  html += "<div class='box'>";
-  html += "<b>Running:</b> " + String(pumps_.isRunning() ? "Yes" : "No");
-  html += "<br><b>Active pin:</b> " + String(pumps_.activePin());
-  html += "<br><b>Remaining:</b> " + String(pumps_.remainingSeconds(), 1) + " s";
-  html += "</div>";
+  out.print(F("{\"running\":"));
+  out.print(pumps_.isRunning() ? F("true") : F("false"));
 
-  html += "<form method='GET' action='/watering_pumps'>";
-  html += "<label>Seconds (max " + String(ctx.config.pumps.maxSecondsOn) + ")</label>";
-  html += "<input type='number' name='sec' min='1' max='" + String(ctx.config.pumps.maxSecondsOn) + "' value='5'>";
+  out.print(F(",\"activePin\":"));
+  out.print(pumps_.activePin());
 
-  if (ctx.config.pumps.enabledA) html += "<button name='ch' value='A'>Pump A</button>";
-  if (ctx.config.pumps.enabledB) html += "<button name='ch' value='B'>Pump B</button>";
-  if (ctx.config.pumps.enabledC) html += "<button name='ch' value='C'>Pump C</button>";
-  html += "<button name='off' value='1'>All Off</button>";
-  html += "</form>";
+  out.print(F(",\"remainingSeconds\":"));
+  char buf[24];
+  dtostrf(pumps_.remainingSeconds(), 0, 2, buf);
+  char* p = buf; while (*p == ' ') ++p;
+  out.print(p);
 
-  // Action handling
-  if (ctx.server.hasArg("off")) {
+  out.print(F("}"));
+}
+
+// Print-based JSON object: {"name":"pumps","ui":...}
+void PumpModule::writeModuleInfoObject(AppContext& ctx, Print& out) {
+  (void)ctx;
+  out.print(F("{\"name\":\"pumps\",\"ui\":\"/watering_pumps\",\"api\":\"/api/pumps\"}"));
+}
+
+// ----------------------------
+// Full page handler: streamed, clean helpers
+// ----------------------------
+static inline char firstCharOrSpace_(const String& s) {
+  return s.length() ? s[0] : ' ';
+}
+
+PumpModule::PumpActionResult PumpModule::processPumpAction_(AppContext& ctx) {
+  auto& s = ctx.server;
+  PumpActionResult r;
+
+  if (s.hasArg("off")) {
     pumps_.allOff();
-    html += "<p><b>OK:</b> All pumps off.</p>";
-  } else if (ctx.server.hasArg("ch") && ctx.server.hasArg("sec")) {
-    String chStr = ctx.server.arg("ch");
-    char ch = chStr.length() ? chStr[0] : ' ';
-    int sec = ctx.server.arg("sec").toInt();
+    r.hasMessage = true;
+    r.isError = false;
+    strlcpy(r.message, "OK: All pumps off.", sizeof(r.message));
+    return r;
+  }
 
-    bool ok = pumps_.start(ch, sec);
+  if (s.hasArg("ch") && s.hasArg("sec")) {
+    const char ch = firstCharOrSpace_(s.arg("ch"));
+    int sec = s.arg("sec").toInt();
+    sec = constrain(sec, 1, ctx.config.pumps.maxSecondsOn);
+
+    const bool ok = pumps_.start(ch, sec);
+    r.hasMessage = true;
+
     if (ok) {
-      html += "<p><b>OK:</b> Started pump ";
-      html += ch;
-      html += " for ";
-      html += sec;
-      html += " seconds.</p>";
+      r.isError = false;
+      snprintf(r.message, sizeof(r.message),
+               "OK: Started pump %c for %d seconds.", ch, sec);
     } else {
-      html += "<p style='color:red;'><b>Error:</b> Could not start pump. "
-              "It may be disabled or already running.</p>";
+      r.isError = true;
+      strlcpy(r.message,
+              "Error: Could not start pump. It may be disabled or already running.",
+              sizeof(r.message));
     }
   }
 
-  html += htmlFooter();
-  ctx.server.send(200, "text/html", html);
+  return r;
 }
 
+void PumpModule::renderStatusBox_(HtmlOut& out) {
+  out.p(F("<div class='box'>"));
+
+  out.p(F("<b>Running:</b> "));
+  out.p(pumps_.isRunning() ? "Yes" : "No");
+
+  out.p(F("<br><b>Active pin:</b> "));
+  out.pInt(pumps_.activePin());
+
+  out.p(F("<br><b>Remaining:</b> "));
+  out.pFloat(pumps_.remainingSeconds(), 1);
+  out.p(F(" s"));
+
+  out.p(F("</div>"));
+}
+
+void PumpModule::renderControlForm_(HtmlOut& out, AppContext& ctx) {
+  const auto& cfg = ctx.config.pumps;
+
+  out.p(F("<form method='GET' action='/watering_pumps'>"));
+
+  out.p(F("<label>Seconds (max "));
+  out.pInt(cfg.maxSecondsOn);
+  out.p(F(")</label>"));
+
+  out.p(F("<input type='number' name='sec' min='1' max='"));
+  out.pInt(cfg.maxSecondsOn);
+  out.p(F("' value='5'>"));
+
+  if (cfg.enabledA) out.p(F("<button name='ch' value='A'>Pump A</button>"));
+  if (cfg.enabledB) out.p(F("<button name='ch' value='B'>Pump B</button>"));
+  if (cfg.enabledC) out.p(F("<button name='ch' value='C'>Pump C</button>"));
+
+  out.p(F("<button name='off' value='1'>All Off</button>"));
+  out.p(F("</form>"));
+}
+
+void PumpModule::renderActionMessage_(HtmlOut& out, const PumpActionResult& r) {
+  if (!r.hasMessage) return;
+
+  if (r.isError) {
+    out.p(F("<p style='color:red;'><b>"));
+    out.p(r.message);
+    out.p(F("</b></p>"));
+  } else {
+    out.p(F("<p><b>"));
+    out.p(r.message);
+    out.p(F("</b></p>"));
+  }
+}
+
+void PumpModule::handlePumpsPage_(AppContext& ctx) {
+  HtmlOut out(ctx.server);
+
+  out.begin(F("Pumps"));
+  out.p(F("<h2>Watering Pumps</h2>"));
+
+  renderStatusBox_(out);
+  renderControlForm_(out, ctx);
+
+  const PumpActionResult result = processPumpAction_(ctx);
+  renderActionMessage_(out, result);
+
+  out.end();
+}
+
+// You can keep this as a simple String response, or stream it too.
+// Here: stream it (small, no fragmentation).
 void PumpModule::handlePumpsApi_(AppContext& ctx) {
-  String json = "{";
-  json += "\"running\":" + String(pumps_.isRunning() ? "true" : "false") + ",";
-  json += "\"activePin\":" + String(pumps_.activePin()) + ",";
-  json += "\"remainingSeconds\":" + String(pumps_.remainingSeconds(), 2);
-  json += "}";
-  ctx.server.send(200, "application/json", json);
+  auto& s = ctx.server;
+
+  s.setContentLength(CONTENT_LENGTH_UNKNOWN);
+  s.send(200, "application/json", "");
+  s.sendContent("{");
+  // Reuse the object writer to keep one source of truth
+  s.sendContent("\"pumps\":");
+  // We need a Print sink; easiest is to call writeApiStatusObject using a tiny adapter.
+  // Since WebServer isn't Print in your environment, just emit directly:
+  s.sendContent("\"running\":");
+  s.sendContent(pumps_.isRunning() ? "true" : "false");
+  s.sendContent(",\"activePin\":");
+  {
+    char b[16]; itoa(pumps_.activePin(), b, 10);
+    s.sendContent(b);
+  }
+  s.sendContent(",\"remainingSeconds\":");
+  {
+    char buf[24];
+    dtostrf(pumps_.remainingSeconds(), 0, 2, buf);
+    char* p = buf; while (*p == ' ') ++p;
+    s.sendContent(p);
+  }
+  s.sendContent("}");
+  s.sendContent("}");
+  s.client().stop();
 }

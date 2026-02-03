@@ -18,177 +18,144 @@ namespace {
 }
 
 void WifiManager::begin(AppConfig& cfg, ConfigStore& store) {
-  cfg_ = &cfg;
-  store_ = &store;
+    cfg_ = &cfg;
+    store_ = &store;
 
-  WiFi.mode(WIFI_STA);
-
-  if (cfg_->ssid.length() > 0) {
-    state_ = State::CONNECTING;
-    attemptConnect_();
-  } else {
-    state_ = State::PROVISIONING;
-    startProvisioning_();
-  }
+    if (cfg_->ssid.length() > 0) {
+        state_ = State::CONNECTING;
+    } else {
+        state_ = State::PROVISIONING;
+    }
+    // Mark for initialization so loop() handles the heavy lifting
+    needsInitialization_ = true; 
 }
 
+
 void WifiManager::loop() {
-  // If we just received new creds from portal, handle it safely here
-  if (gotProvision_) {
-    gotProvision_ = false;
+    // 1. Handle Provisioning Callbacks (Reboot logic)
+    if (gotProvision_) {
+        gotProvision_ = false;
+        cfg_->ssid = pendingSsid_;
+        cfg_->password = pendingPass_;
+        store_->save(*cfg_);
+        Serial.println(F("[PROV] Saved. Rebooting..."));
+        delay(300);
+        ESP.restart();
+    }
 
-    cfg_->ssid = pendingSsid_;
-    cfg_->password = pendingPass_;
-    store_->save(*cfg_);
+    // 2. Handle State Initializations (Prevents Stack Overflow)
+    if (needsInitialization_) {
+        needsInitialization_ = false;
+        if (state_ == State::CONNECTING) {
+            attemptConnect_();
+        } else if (state_ == State::PROVISIONING) {
+            startProvisioning_();
+        }
+        return; 
+    }
 
-    Serial.println("[PROV] Saved credentials. Rebooting for clean STA connect...");
-    delay(300);
-    ESP.restart();
-  }
-  if (state_ == State::CONNECTED) return;
+    // 3. Normal State Logic
+    if (state_ == State::CONNECTED) return;
 
-  if (state_ == State::CONNECTING) {
-    if (WiFi.status() == WL_CONNECTED) {
-      state_ = State::CONNECTED;
-      Serial.print("WiFi connected. IP: ");
-      Serial.println(WiFi.localIP());
+    if (state_ == State::CONNECTING) {
+        if (WiFi.status() == WL_CONNECTED) {
+            state_ = State::CONNECTED;
+            Serial.print(F("WiFi connected. IP: "));
+            Serial.println(WiFi.localIP());
+            return;
+        }
+
+        if (millis() - lastAttemptMs_ >= retryIntervalMs_) {
+            attemptConnect_(); 
+        }
+    }
+    if (state_ == State::CONNECTED) {
+      // Optional: Check if we lost connection while running
+      if (WiFi.status() != WL_CONNECTED) {
+          state_ = State::CONNECTING;
+          connectionAttempts_ = 0; 
+      }
       return;
     }
 
-    uint32_t now = millis();
-    if (now - lastAttemptMs_ >= retryIntervalMs_) {
-      attemptConnect_();
+    if (state_ == State::CONNECTING) {
+        if (WiFi.status() == WL_CONNECTED) {
+            state_ = State::CONNECTED;
+            connectionAttempts_ = 0; // Reset counter on success
+            Serial.println(F("WiFi Connected!"));
+            return;
+        }
+
+        uint32_t now = millis();
+        // Use a 10-second timeout per attempt
+        if (now - lastAttemptMs_ >= 10000) { 
+            connectionAttempts_++;
+            Serial.printf("Connection attempt %d/%d failed.\n", connectionAttempts_, MAX_CONN_ATTEMPTS);
+            
+            if (connectionAttempts_ >= MAX_CONN_ATTEMPTS) {
+                Serial.println(F("Too many failures. Switching to Provisioning Mode..."));
+                resetToProvisioning(); 
+            } else {
+                attemptConnect_(); // Try again
+            }
+        }
     }
-    return;
-  }
 }
-// void WifiManager::loop() {
-  // if (state_ == State::CONNECTED) return;
 
-  // if (state_ == State::CONNECTING) {
-  //   if (WiFi.status() == WL_CONNECTED) {
-  //     state_ = State::CONNECTED;
-  //     Serial.print("WiFi connected. IP: ");
-  //     Serial.println(WiFi.localIP());
-  //     return;
-  //   }
+void WifiManager::attemptConnect_() {
+    lafttemptMs_ = millis();
+    Serial.printf("Connecting to SSID: %s\n", cfg_->ssid.c_str());
+    
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(cfg_->ssid.c_str(), cfg_->password.c_str());
+    
+}
 
-  //   uint32_t now = millis();
-  //   if (now - lastAttemptMs_ >= retryIntervalMs_) {
-  //     attemptConnect_();
-  //   }
-  //   return;
-  // }
-
-//   // PROVISIONING: WiFiProvisioner runs portal; nothing needed here.
-// }
 
 bool WifiManager::isConnected() const {
   return WiFi.status() == WL_CONNECTED;
 }
 
-void WifiManager::attemptConnect_() {
-  lastAttemptMs_ = millis();
-  Serial.print("Connecting to SSID: ");
-  Serial.println(cfg_->ssid);
-
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(cfg_->ssid.c_str(), cfg_->password.c_str());
-}
-
-
 void WifiManager::startProvisioning_() {
-  Serial.println("Provisioning mode: connect to AP 'ESP_PROV' and open http://192.168.4.1");
+  Serial.println(F("--- Entering Provisioning Mode ---"));
 
-  // Enable AP + STA so scanning can work reliably
-  WiFi.mode(WIFI_AP_STA);
+  // 1. Clean up any existing WiFi state
+  WiFi.disconnect(true, true);
+  delay(200); 
 
-  // Optional but often helps scan stability
-  WiFi.setSleep(false);
-  delay(100);
+  // 2. Set mode to AP only first to reduce power/memory spike
+  WiFi.mode(WIFI_AP);
+  delay(200);
 
-  // On newer Arduino-ESP32 cores, STA may need to be explicitly started
-  #if defined(ESP_ARDUINO_VERSION_MAJOR) && (ESP_ARDUINO_VERSION_MAJOR >= 3)
-    WiFi.STA.begin();
-    delay(50);
-  #endif
-
-  // ✅ Diagnostics: heap + WiFi mode
-  printHeap("prov_before_start");
-  Serial.printf("[DBG] WiFi mode now: %d (1=STA, 2=AP, 3=AP+STA)\n", (int)WiFi.getMode());
-
-  // ✅ Diagnostics: manual scan to see if the ESP32 can actually see SSIDs
-  Serial.println("[DBG] Starting manual WiFi.scanNetworks() ...");
-  int n = WiFi.scanNetworks(false, true);  // sync scan, include hidden
-  Serial.printf("[DBG] scanNetworks found %d networks\n", n);
-  for (int i = 0; i < n && i < 10; i++) {
-    Serial.printf("  %d: %s (%ddBm) ch %d\n",
-                  i, WiFi.SSID(i).c_str(), WiFi.RSSI(i), WiFi.channel(i));
-  }
-  WiFi.scanDelete();
-  printHeap("prov_after_manual_scan");
-
-  // TEMPORARY: allow manual entry (useful if UI scan list still empty)
-  provisioner.getConfig().SHOW_INPUT_FIELD = true;   // <- set true for debugging
-  provisioner.getConfig().SHOW_RESET_FIELD = false;
-
+  // 3. Setup Provisioner Callback
   provisioner.onSuccess([this](const char* ssid, const char* password, const char*) {
-    Serial.printf("[PROV] Received SSID: %s\n", ssid);
     pendingSsid_ = String(ssid);
-    pendingPass_ = password ? String(password) : String("");
+    pendingPass_ = password ? String(password) : "";
     gotProvision_ = true;
   });
 
-  // provisioner.onSuccess([this](const char* ssid, const char* password, const char*) {
-  //   Serial.printf("Provisioning successful! SSID: %s\n", ssid);
-
-  //   cfg_->ssid = String(ssid);
-  //   cfg_->password = password ? String(password) : String("");
-
-  //   store_->save(*cfg_);
-  //   state_ = State::CONNECTING;
-
-  //   // Switch to STA for normal operation
-  //   WiFi.mode(WIFI_STA);
-  //   attemptConnect_();
-  // });
-
+  // 4. Start the provisioner
+  // If your library allows, disable its internal "Auto-Scan" if memory is tight
   provisioner.startProvisioning();
-  Serial.println("[DBG] Provisioner started.");
+  
+  Serial.println(F("[INFO] Provisioner logic started. Check 192.168.4.1"));
 }
-
-
-// void WifiManager::startProvisioning_() {
-//   Serial.println("Provisioning mode: connect to AP 'ESP_PROV' and open http://192.168.4.1");
-
-//   provisioner.getConfig().SHOW_INPUT_FIELD = false;
-//   provisioner.getConfig().SHOW_RESET_FIELD = false;
-
-//   provisioner.onSuccess([this](const char* ssid, const char* password, const char*) {
-//     Serial.printf("Provisioned SSID: %s\n", ssid);
-
-//     cfg_->ssid = String(ssid);
-//     cfg_->password = password ? String(password) : String("");
-
-//     store_->save(*cfg_);
-
-//     state_ = State::CONNECTING;
-//     attemptConnect_();
-//   });
-
-//   provisioner.startProvisioning();
-// }
 
 void WifiManager::resetToProvisioning() {
   if (!cfg_ || !store_) return;
 
+  Serial.println(F("Resetting WiFi credentials..."));
+
+  // 1. Clear your application-level config
   store_->clearWifiCredentials();
   cfg_->ssid = "";
   cfg_->password = "";
 
-  WiFi.disconnect(true, true);
-  WiFi.mode(WIFI_STA);
+  // 2. Wipe the ESP32's internal WiFi NVS cache
+  WiFi.disconnect(true, true); // (Bool eraseAP, Bool eraseSTA)
+  delay(200);
 
+  // 3. Set state so the loop handles the startProvisioning_() safely
   state_ = State::PROVISIONING;
-  startProvisioning_();
+  needsInitialization_ = true; 
 }

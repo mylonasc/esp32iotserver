@@ -11,6 +11,7 @@ public:
 
 private:
   ModuleManager& modules_;
+  AppContext* ctx_ = nullptr; // non-owning; must outlive WebUi + route handlers
 
   void handleRoot_(AppContext& ctx);
   void handleConfigGet_(AppContext& ctx);

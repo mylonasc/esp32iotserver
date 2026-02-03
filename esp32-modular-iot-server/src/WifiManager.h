@@ -15,7 +15,10 @@ public:
   void resetToProvisioning();
 
 private:
-  volatile bool gotProvision_ = false;
+  bool needsInitialization_ = false;
+  int connectionAttempts_ = 0;
+  int MAX_CONN_ATTEMPTS = 3;
+  bool gotProvision_ = false;
   String pendingSsid_;
   String pendingPass_;
   AppConfig* cfg_ = nullptr;
