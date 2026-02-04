@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Arduino.h>
+#include <ArduinoJson.h>
 #include "AppContext.h"
 
 class IModule {
@@ -41,6 +42,38 @@ public:
     out.print(F("{\"name\":\""));
     out.print(name());
     out.print(F("\"}"));
+  }
+
+  // --------------------------------------------------------------------------
+  // MCP tools (optional per-module)
+  // --------------------------------------------------------------------------
+
+  // Append MCP tool definitions (JSON objects) to tools list.
+  // Use `first` to manage commas in an array.
+  virtual void appendMcpTools(Print& out, bool& first) {
+    (void)out;
+    (void)first;
+  }
+
+  virtual bool supportsMcpTool(const char* toolName) const {
+    (void)toolName;
+    return false;
+  }
+
+  // Handle an MCP tool call for this module.
+  // If handled, write the JSON result object to `out` and return true.
+  // Set `rebootRequested` if the tool wants a reboot after responding.
+  virtual bool handleMcpToolCall(AppContext& ctx,
+                                 const char* toolName,
+                                 JsonObject args,
+                                 Print& out,
+                                 bool& rebootRequested) {
+    (void)ctx;
+    (void)toolName;
+    (void)args;
+    (void)out;
+    (void)rebootRequested;
+    return false;
   }
 
   // --------------------------------------------------------------------------

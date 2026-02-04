@@ -1,5 +1,6 @@
 #include "SoilMoistureModule.h"
 #include "Html.h"
+#include "WebResponse.h"
 
 static uint32_t nowMs() { return millis(); }
 
@@ -11,7 +12,123 @@ void SoilMoistureModule::begin(AppContext& ctx) {
 
 void SoilMoistureModule::loop(AppContext& ctx) {
   (void)ctx;
+  if (!hasEnabledSensors_()) return;
   soil_.loop();
+}
+
+void SoilMoistureModule::renderHome(AppContext& ctx, Print& out) {
+  const bool running = hasEnabledSensors_() && ctx.config.soil.intervalMs > 0;
+  out.print(F("<div class='box'>"));
+  out.print(F("<b>Soil Moisture</b><br>"));
+
+  out.print(F("Running: "));
+  out.print(running ? F("Yes") : F("No"));
+  out.print(F("<br>"));
+
+  const auto& a = soil_.r0();
+  const auto& b = soil_.r1();
+  const auto& c = soil_.r2();
+
+  auto addLine = [&](const SoilMoistureController::Reading& r) {
+    if (!r.enabled) return;
+    out.print(r.id);
+    out.print(F(": "));
+    if (!r.hasValue) out.print(F("—"));
+    else {
+      out.print(r.percent);
+      out.print(F("%"));
+    }
+    out.print(F("<br>"));
+  };
+
+  addLine(a);
+  addLine(b);
+  addLine(c);
+
+  out.print(F("<a href='/soil'>Open</a>"));
+  out.print(F("</div>"));
+}
+
+void SoilMoistureModule::renderConfig(AppContext& ctx, Print& out) {
+  auto& sc = ctx.config.soil;
+
+  out.print(F("<details class='box'>"));
+  out.print(F("<summary>Soil Moisture</summary>"));
+  out.print(F("<label>Read interval (ms)</label>"));
+  out.print(F("<input type='number' name='soil_int' min='50' value='"));
+  out.print(sc.intervalMs);
+  out.print(F("'>"));
+
+  out.print(F("<label>Calibration wetRaw</label>"));
+  out.print(F("<input type='number' name='soil_wet' value='"));
+  out.print(sc.wetRaw);
+  out.print(F("'>"));
+
+  out.print(F("<label>Calibration dryRaw</label>"));
+  out.print(F("<input type='number' name='soil_dry' value='"));
+  out.print(sc.dryRaw);
+  out.print(F("'>"));
+
+  out.print(F("<hr><b>Sensor 1</b><br>"));
+  out.print(F("<label><input type='checkbox' name='soil0_en' "));
+  if (sc.s0.enabled) out.print(F("checked"));
+  out.print(F("> Enabled</label>"));
+  out.print(F("<label>Pin</label>"));
+  out.print(F("<input type='number' name='soil0_pin' value='"));
+  out.print(sc.s0.pin);
+  out.print(F("'>"));
+  out.print(F("<label>ID</label>"));
+  out.print(F("<input name='soil0_id' value='"));
+  out.print(sc.s0.id);
+  out.print(F("'>"));
+
+  out.print(F("<hr><b>Sensor 2</b><br>"));
+  out.print(F("<label><input type='checkbox' name='soil1_en' "));
+  if (sc.s1.enabled) out.print(F("checked"));
+  out.print(F("> Enabled</label>"));
+  out.print(F("<label>Pin</label>"));
+  out.print(F("<input type='number' name='soil1_pin' value='"));
+  out.print(sc.s1.pin);
+  out.print(F("'>"));
+  out.print(F("<label>ID</label>"));
+  out.print(F("<input name='soil1_id' value='"));
+  out.print(sc.s1.id);
+  out.print(F("'>"));
+
+  out.print(F("<hr><b>Sensor 3</b><br>"));
+  out.print(F("<label><input type='checkbox' name='soil2_en' "));
+  if (sc.s2.enabled) out.print(F("checked"));
+  out.print(F("> Enabled</label>"));
+  out.print(F("<label>Pin</label>"));
+  out.print(F("<input type='number' name='soil2_pin' value='"));
+  out.print(sc.s2.pin);
+  out.print(F("'>"));
+  out.print(F("<label>ID</label>"));
+  out.print(F("<input name='soil2_id' value='"));
+  out.print(sc.s2.id);
+  out.print(F("'>"));
+
+  out.print(F("</details>"));
+}
+
+void SoilMoistureModule::writeApiStatusObject(AppContext& ctx, Print& out) {
+  const bool running = hasEnabledSensors_() && ctx.config.soil.intervalMs > 0;
+  out.print(F("{\"api\":\"/api/soil\","));
+  out.print(F("\"ui\":\"/soil\","));
+  out.print(F("\"running\":"));
+  out.print(running ? F("true") : F("false"));
+  out.print(F(",\"enabledCount\":"));
+  int enabled = 0;
+  if (soil_.r0().enabled) enabled++;
+  if (soil_.r1().enabled) enabled++;
+  if (soil_.r2().enabled) enabled++;
+  out.print(enabled);
+  out.print(F("}"));
+}
+
+void SoilMoistureModule::writeModuleInfoObject(AppContext& ctx, Print& out) {
+  (void)ctx;
+  out.print(F("{\"name\":\"soil\",\"ui\":\"/soil\",\"api\":\"/api/soil\"}"));
 }
 
 void SoilMoistureModule::appendApiStatusObject(AppContext& ctx, String& json) {
@@ -144,86 +261,260 @@ void SoilMoistureModule::handleConfigPost(AppContext& ctx) {
 }
 
 
-void SoilMoistureModule::appendSensorRow_(String& html, const SoilMoistureController::Reading& r, uint32_t now) {
+void SoilMoistureModule::appendSensorRow_(Print& out, const SoilMoistureController::Reading& r, uint32_t now) {
   if (!r.enabled) return;
 
-  html += "<tr>";
-  html += "<td>" + r.id + "</td>";
-  html += "<td>" + String(r.pin) + "</td>";
+  out.print(F("<tr>"));
+  out.print(F("<td>"));
+  out.print(r.id);
+  out.print(F("</td>"));
+  out.print(F("<td>"));
+  out.print(r.pin);
+  out.print(F("</td>"));
 
   if (!r.hasValue) {
-    html += "<td>—</td><td>—</td><td>—</td>";
+    out.print(F("<td>—</td><td>—</td><td>—</td>"));
   } else {
-    html += "<td>" + String(r.raw) + "</td>";
-    html += "<td><b>" + String(r.percent) + "%</b></td>";
-    html += "<td>" + String((now - r.lastReadMs) / 1000) + "s</td>";
+    out.print(F("<td>"));
+    out.print(r.raw);
+    out.print(F("</td>"));
+    out.print(F("<td><b>"));
+    out.print(r.percent);
+    out.print(F("%</b></td>"));
+    out.print(F("<td>"));
+    out.print((uint32_t)((now - r.lastReadMs) / 1000));
+    out.print(F("s</td>"));
   }
-  html += "</tr>";
+  out.print(F("</tr>"));
 }
 
 void SoilMoistureModule::handleSoilPage_(AppContext& ctx) {
   const uint32_t now = nowMs();
-  String html = htmlHeader("Soil Moisture");
-  html += "<h2>Soil Moisture</h2>";
+  auto res = beginChunkedHtml(ctx.server, F("Soil Moisture"));
+  auto& out = res.out();
+  out.print(F("<h2>Soil Moisture</h2>"));
 
-  html += "<div class='box'>";
-  html += "<b>Interval:</b> " + String(ctx.config.soil.intervalMs) + " ms<br>";
-  html += "<b>Calibration:</b> wetRaw=" + String(ctx.config.soil.wetRaw) +
-          ", dryRaw=" + String(ctx.config.soil.dryRaw);
-  html += "<br><a href='/api/soil'>JSON</a>";
-  html += "</div>";
+  out.print(F("<div class='box'>"));
+  out.print(F("<b>Interval:</b> "));
+  out.print(ctx.config.soil.intervalMs);
+  out.print(F(" ms<br>"));
+  out.print(F("<b>Calibration:</b> wetRaw="));
+  out.print(ctx.config.soil.wetRaw);
+  out.print(F(", dryRaw="));
+  out.print(ctx.config.soil.dryRaw);
+  out.print(F("<br><a href='/api/soil'>JSON</a>"));
+  out.print(F("</div>"));
 
-  html += "<table style='width:100%;border-collapse:collapse;'>";
-  html += "<tr><th align='left'>ID</th><th align='left'>Pin</th><th align='left'>Raw</th><th align='left'>Moisture</th><th align='left'>Age</th></tr>";
+  out.print(F("<table style='width:100%;border-collapse:collapse;'>"));
+  out.print(F("<tr><th align='left'>ID</th><th align='left'>Pin</th><th align='left'>Raw</th><th align='left'>Moisture</th><th align='left'>Age</th></tr>"));
 
-  appendSensorRow_(html, soil_.r0(), now);
-  appendSensorRow_(html, soil_.r1(), now);
-  appendSensorRow_(html, soil_.r2(), now);
+  appendSensorRow_(out, soil_.r0(), now);
+  appendSensorRow_(out, soil_.r1(), now);
+  appendSensorRow_(out, soil_.r2(), now);
 
-  html += "</table>";
-  html += "<p><button type='button' onclick='location.reload()'>Refresh</button></p>";
-  html += htmlFooter();
-
-  ctx.server.send(200, "text/html", html);
+  out.print(F("</table>"));
+  out.print(F("<p><button type='button' onclick='location.reload()'>Refresh</button></p>"));
+  out.print(htmlFooter());
 }
 
-static String jsonEscape(const String& in) {
-  String out;
-  out.reserve(in.length() + 8);
+static void printJsonString_(Print& out, const String& in) {
   for (size_t i = 0; i < in.length(); ++i) {
     char c = in[i];
-    if (c == '\"') out += "\\\"";
-    else if (c == '\\') out += "\\\\";
-    else out += c;
+    if (c == '"') out.print(F("\\\""));
+    else if (c == '\\') out.print(F("\\\\"));
+    else out.print(c);
   }
-  return out;
 }
 
-void SoilMoistureModule::appendSensorJson_(String& json, const SoilMoistureController::Reading& r, uint32_t now) {
-  json += "{";
-  json += "\"enabled\":" + String(r.enabled ? "true" : "false") + ",";
-  json += "\"id\":\"" + jsonEscape(r.id) + "\",";
-  json += "\"pin\":" + String(r.pin) + ",";
-  json += "\"hasValue\":" + String(r.hasValue ? "true" : "false") + ",";
-  json += "\"raw\":" + String(r.hasValue ? r.raw : 0) + ",";
-  json += "\"percent\":" + String(r.hasValue ? r.percent : 0) + ",";
-  json += "\"ageMs\":" + String(r.hasValue ? (uint32_t)(now - r.lastReadMs) : 0);
-  json += "}";
+static void printJsonStringQuoted_(Print& out, const String& in) {
+  out.print('"');
+  printJsonString_(out, in);
+  out.print('"');
+}
+
+static void writeSoilSensor_(Print& out, const SoilMoistureController::Reading& r, uint32_t now) {
+  out.print(F("{"));
+  out.print(F("\"enabled\":")); out.print(r.enabled ? F("true") : F("false"));
+  out.print(F(",\"id\":")); printJsonStringQuoted_(out, r.id);
+  out.print(F(",\"pin\":")); out.print(r.pin);
+  out.print(F(",\"hasValue\":")); out.print(r.hasValue ? F("true") : F("false"));
+  out.print(F(",\"raw\":")); out.print(r.hasValue ? r.raw : 0);
+  out.print(F(",\"percent\":")); out.print(r.hasValue ? r.percent : 0);
+  out.print(F(",\"ageMs\":")); out.print(r.hasValue ? (uint32_t)(now - r.lastReadMs) : 0);
+  out.print(F("}"));
+}
+
+void SoilMoistureModule::appendSensorJson_(Print& out, const SoilMoistureController::Reading& r, uint32_t now) {
+  out.print(F("{"));
+  out.print(F("\"enabled\":"));
+  out.print(r.enabled ? F("true") : F("false"));
+  out.print(F(",\"id\":\""));
+  printJsonString_(out, r.id);
+  out.print(F("\","));
+  out.print(F("\"pin\":"));
+  out.print(r.pin);
+  out.print(F(",\"hasValue\":"));
+  out.print(r.hasValue ? F("true") : F("false"));
+  out.print(F(",\"raw\":"));
+  out.print(r.hasValue ? r.raw : 0);
+  out.print(F(",\"percent\":"));
+  out.print(r.hasValue ? r.percent : 0);
+  out.print(F(",\"ageMs\":"));
+  out.print(r.hasValue ? (uint32_t)(now - r.lastReadMs) : 0);
+  out.print(F("}"));
 }
 
 void SoilMoistureModule::handleSoilApi_(AppContext& ctx) {
   const uint32_t now = nowMs();
+  auto res = beginChunkedJson(ctx.server);
+  auto& out = res.out();
+  out.print(F("{"));
+  out.print(F("\"intervalMs\":"));
+  out.print(ctx.config.soil.intervalMs);
+  out.print(F(",\"wetRaw\":"));
+  out.print(ctx.config.soil.wetRaw);
+  out.print(F(",\"dryRaw\":"));
+  out.print(ctx.config.soil.dryRaw);
+  out.print(F(",\"sensors\":["));
 
-  String json = "{";
-  json += "\"intervalMs\":" + String(ctx.config.soil.intervalMs) + ",";
-  json += "\"wetRaw\":" + String(ctx.config.soil.wetRaw) + ",";
-  json += "\"dryRaw\":" + String(ctx.config.soil.dryRaw) + ",";
-  json += "\"sensors\":[";
+  appendSensorJson_(out, soil_.r0(), now); out.print(F(","));
+  appendSensorJson_(out, soil_.r1(), now); out.print(F(","));
+  appendSensorJson_(out, soil_.r2(), now);
 
-  appendSensorJson_(json, soil_.r0(), now); json += ",";
-  appendSensorJson_(json, soil_.r1(), now); json += ",";
-  appendSensorJson_(json, soil_.r2(), now);
+  out.print(F("]}"));
+}
 
-  json += "]}";
-  ctx.server.send(200, "application/json", json);
+void SoilMoistureModule::appendMcpTools(Print& out, bool& first) {
+  auto addTool = [&](const __FlashStringHelper* name,
+                     const __FlashStringHelper* description,
+                     const __FlashStringHelper* schema) {
+    if (!first) out.print(',');
+    first = false;
+    out.print(F("{\"name\":"));
+    out.print('"'); out.print(name); out.print(F("\","));
+    out.print(F("\"description\":"));
+    out.print('"'); out.print(description); out.print(F("\","));
+    out.print(F("\"inputSchema\":"));
+    out.print(schema);
+    out.print(F("}"));
+  };
+
+  addTool(F("soil.readings"),
+          F("Get soil sensor readings with calibration and running state."),
+          F("{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}"));
+
+  addTool(F("soil.config.get"),
+          F("Get soil sensor configuration (interval, calibration, sensors)."),
+          F("{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}"));
+
+  addTool(F("soil.config.set"),
+          F("Update soil configuration. Can save/apply and request reboot."),
+          F("{\"type\":\"object\",\"properties\":{"
+            "\"intervalMs\":{\"type\":\"integer\"},\"wetRaw\":{\"type\":\"integer\"},\"dryRaw\":{\"type\":\"integer\"},"
+            "\"s0\":{\"type\":\"object\",\"properties\":{\"enabled\":{\"type\":\"boolean\"},\"pin\":{\"type\":\"integer\"},\"id\":{\"type\":\"string\"}},\"additionalProperties\":false},"
+            "\"s1\":{\"type\":\"object\",\"properties\":{\"enabled\":{\"type\":\"boolean\"},\"pin\":{\"type\":\"integer\"},\"id\":{\"type\":\"string\"}},\"additionalProperties\":false},"
+            "\"s2\":{\"type\":\"object\",\"properties\":{\"enabled\":{\"type\":\"boolean\"},\"pin\":{\"type\":\"integer\"},\"id\":{\"type\":\"string\"}},\"additionalProperties\":false},"
+            "\"save\":{\"type\":\"boolean\"},\"apply\":{\"type\":\"boolean\"},\"reboot\":{\"type\":\"boolean\"}"
+          "},\"additionalProperties\":false}"));
+}
+
+bool SoilMoistureModule::supportsMcpTool(const char* toolName) const {
+  return strcmp(toolName, "soil.readings") == 0 ||
+         strcmp(toolName, "soil.config.get") == 0 ||
+         strcmp(toolName, "soil.config.set") == 0;
+}
+
+bool SoilMoistureModule::handleMcpToolCall(AppContext& ctx,
+                                           const char* toolName,
+                                           JsonObject args,
+                                           Print& out,
+                                           bool& rebootRequested) {
+  if (strcmp(toolName, "soil.readings") == 0) {
+    const uint32_t now = millis();
+    const auto& cfg = ctx.config.soil;
+    const bool running = hasEnabledSensors_() && cfg.intervalMs > 0;
+
+    out.print(F("{"));
+    out.print(F("\"running\":")); out.print(running ? F("true") : F("false"));
+    out.print(F(",\"intervalMs\":")); out.print(cfg.intervalMs);
+    out.print(F(",\"wetRaw\":")); out.print(cfg.wetRaw);
+    out.print(F(",\"dryRaw\":")); out.print(cfg.dryRaw);
+    out.print(F(",\"sensors\":["));
+    writeSoilSensor_(out, soil_.r0(), now); out.print(',');
+    writeSoilSensor_(out, soil_.r1(), now); out.print(',');
+    writeSoilSensor_(out, soil_.r2(), now);
+    out.print(F("]}"));
+    return true;
+  }
+
+  if (strcmp(toolName, "soil.config.get") == 0) {
+    const auto& cfg = ctx.config.soil;
+    out.print(F("{"));
+    out.print(F("\"intervalMs\":")); out.print(cfg.intervalMs);
+    out.print(F(",\"wetRaw\":")); out.print(cfg.wetRaw);
+    out.print(F(",\"dryRaw\":")); out.print(cfg.dryRaw);
+    out.print(F(",\"s0\":{"));
+  out.print(F("\"enabled\":")); out.print(cfg.s0.enabled ? F("true") : F("false"));
+  out.print(F(",\"pin\":")); out.print(cfg.s0.pin);
+  out.print(F(",\"id\":")); printJsonStringQuoted_(out, cfg.s0.id);
+  out.print(F("},\"s1\":{"));
+  out.print(F("\"enabled\":")); out.print(cfg.s1.enabled ? F("true") : F("false"));
+  out.print(F(",\"pin\":")); out.print(cfg.s1.pin);
+  out.print(F(",\"id\":")); printJsonStringQuoted_(out, cfg.s1.id);
+  out.print(F("},\"s2\":{"));
+  out.print(F("\"enabled\":")); out.print(cfg.s2.enabled ? F("true") : F("false"));
+  out.print(F(",\"pin\":")); out.print(cfg.s2.pin);
+  out.print(F(",\"id\":")); printJsonStringQuoted_(out, cfg.s2.id);
+    out.print(F("}}"));
+    return true;
+  }
+
+  if (strcmp(toolName, "soil.config.set") == 0) {
+    const bool save = !args.containsKey("save") || args["save"].as<bool>();
+    const bool apply = !args.containsKey("apply") || args["apply"].as<bool>();
+    const bool reboot = args.containsKey("reboot") && args["reboot"].as<bool>();
+
+    if (args.containsKey("intervalMs")) {
+      long v = args["intervalMs"].as<long>();
+      if (v < 50) v = 50;
+      ctx.config.soil.intervalMs = (uint32_t)v;
+    }
+    if (args.containsKey("wetRaw")) ctx.config.soil.wetRaw = args["wetRaw"].as<int>();
+    if (args.containsKey("dryRaw")) ctx.config.soil.dryRaw = args["dryRaw"].as<int>();
+
+    JsonObject s0 = args["s0"].as<JsonObject>();
+    if (!s0.isNull()) {
+      if (s0.containsKey("enabled")) ctx.config.soil.s0.enabled = s0["enabled"].as<bool>();
+      if (s0.containsKey("pin")) ctx.config.soil.s0.pin = s0["pin"].as<int>();
+      if (s0.containsKey("id")) ctx.config.soil.s0.id = s0["id"].as<const char*>();
+    }
+    JsonObject s1 = args["s1"].as<JsonObject>();
+    if (!s1.isNull()) {
+      if (s1.containsKey("enabled")) ctx.config.soil.s1.enabled = s1["enabled"].as<bool>();
+      if (s1.containsKey("pin")) ctx.config.soil.s1.pin = s1["pin"].as<int>();
+      if (s1.containsKey("id")) ctx.config.soil.s1.id = s1["id"].as<const char*>();
+    }
+    JsonObject s2 = args["s2"].as<JsonObject>();
+    if (!s2.isNull()) {
+      if (s2.containsKey("enabled")) ctx.config.soil.s2.enabled = s2["enabled"].as<bool>();
+      if (s2.containsKey("pin")) ctx.config.soil.s2.pin = s2["pin"].as<int>();
+      if (s2.containsKey("id")) ctx.config.soil.s2.id = s2["id"].as<const char*>();
+    }
+
+    if (save) ctx.configStore.save(ctx.config);
+    if (apply) soil_.begin(ctx.config.soil);
+    if (reboot) rebootRequested = true;
+
+    out.print(F("{\"saved\":")); out.print(save ? F("true") : F("false"));
+    out.print(F(",\"applied\":")); out.print(apply ? F("true") : F("false"));
+    out.print(F(",\"rebooting\":")); out.print(reboot ? F("true") : F("false"));
+    out.print(F("}"));
+    return true;
+  }
+
+  return false;
+}
+
+bool SoilMoistureModule::hasEnabledSensors_() const {
+  return soil_.r0().enabled || soil_.r1().enabled || soil_.r2().enabled;
 }

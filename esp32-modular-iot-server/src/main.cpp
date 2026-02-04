@@ -12,10 +12,13 @@
 #include "AppContext.h"
 #include "ModuleManager.h"
 #include "WebUi.h"
+#include "WebResponse.h"
+#include "McpServer.h"
 
 // Modules
 #include "modules/PumpModule.h"
 #include "modules/SoilMoistureModule.h"
+#include "modules/DhtModule.h"
 
 #include "esp_heap_caps.h"
 
@@ -48,9 +51,11 @@ WifiManager wifi; // Keep this one as a standard object so it can run immediatel
 
 PumpModule pumpModule;
 SoilMoistureModule soilModule;
+DhtModule dhtModule;
 
 ModuleManager modules;
 WebUi ui(modules);
+McpServer mcp;
 ConfigStore configStore;
 AppConfig config;
 AppContext app_ctx{ server, configStore, config, wifi };
@@ -61,48 +66,47 @@ bool servicesStarted = false;
 static void registerCoreApiRoutes() {
   // Combined API endpoint
   server.on("/api", HTTP_GET, []() {
-    String json;
-    json.reserve(1024);
+    auto res = beginChunkedJson(server);
+    auto& out = res.out();
+    out.print(F("{"));
+    out.print(F("\"uptime_seconds\":"));
+    out.print((uint32_t)(millis() / 1000));
+    out.print(F(","));
 
-    json += "{";
-    json += "\"uptime_seconds\":";
-    json += String(millis() / 1000);
-    json += ",";
+    out.print(F("\"wifi_status\":\""));
+    out.print(WiFi.status() == WL_CONNECTED ? F("connected") : F("not_connected"));
+    out.print(F("\","));
 
-    json += "\"wifi_status\":\"";
-    json += (WiFi.status() == WL_CONNECTED ? "connected" : "not_connected");
-    json += "\",";
+    out.print(F("\"ip\":\""));
+    if (WiFi.status() == WL_CONNECTED) {
+      out.print(WiFi.localIP().toString());
+    }
+    out.print(F("\","));
 
-    json += "\"ip\":\"";
-    json += (WiFi.status() == WL_CONNECTED ? WiFi.localIP().toString() : String(""));
-    json += "\",";
+    out.print(F("\"hostname\":\""));
+    out.print(app_ctx.config.hostname);
+    out.print(F("\","));
 
-    json += "\"hostname\":\"";
-    json += app_ctx.config.hostname;
-    json += "\",";
+    out.print(F("\"modules\":{"));
+    modules.writeAllApiStatus(app_ctx, out);
+    out.print(F("}"));
 
-    json += "\"modules\":{";
-    modules.appendAllApiStatus(app_ctx, json);
-    json += "}";
-
-    json += "}";
-
-    server.send(200, "application/json", json);
+    out.print(F("}"));
   });
 
   // Module registry endpoint
   server.on("/api/modules", HTTP_GET, []() {
-    String json;
-    json.reserve(512);
-
-    json += "{";
-    json += "\"modules\":[";
-    modules.appendAllModuleInfo(app_ctx, json);
-    json += "]";
-    json += "}";
-
-    server.send(200, "application/json", json);
+    auto res = beginChunkedJson(server);
+    auto& out = res.out();
+    out.print(F("{"));
+    out.print(F("\"modules\":["));
+    modules.writeAllModuleInfo(app_ctx, out);
+    out.print(F("]"));
+    out.print(F("}"));
   });
+
+  // MCP JSON-RPC endpoint
+  mcp.registerRoutes(app_ctx, modules);
 }
 
 
@@ -129,8 +133,9 @@ void loop() {
     if (!servicesStarted) {
         validateHeap();
         // 3. ONLY NOW run the heavy logic
-        modules.add(pumpModule);
-        modules.add(soilModule);
+  modules.add(pumpModule);
+  modules.add(soilModule);
+  modules.add(dhtModule);
         modules.beginAll(app_ctx);
         ui.registerRoutes(app_ctx);
         modules.registerAllRoutes(app_ctx);

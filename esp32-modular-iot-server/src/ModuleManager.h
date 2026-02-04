@@ -57,6 +57,35 @@ public:
   }
 
   // --------------------------------------------------------------------------
+  // MCP helpers
+  // --------------------------------------------------------------------------
+  void appendMcpTools(Print& out, bool& first) {
+    for (int i = 0; i < count_; ++i) {
+      modules_[i]->appendMcpTools(out, first);
+    }
+  }
+
+  bool supportsMcpTool(const char* toolName) const {
+    for (int i = 0; i < count_; ++i) {
+      if (modules_[i]->supportsMcpTool(toolName)) return true;
+    }
+    return false;
+  }
+
+  bool handleMcpToolCall(AppContext& ctx,
+                         const char* toolName,
+                         JsonObject args,
+                         Print& out,
+                         bool& rebootRequested) {
+    for (int i = 0; i < count_; ++i) {
+      if (modules_[i]->handleMcpToolCall(ctx, toolName, args, out, rebootRequested)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // --------------------------------------------------------------------------
   // Config POST handlers stay as-is (not a fragmentation hotspot)
   // --------------------------------------------------------------------------
   void handleConfigPost(AppContext& ctx) {

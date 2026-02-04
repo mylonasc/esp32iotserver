@@ -1,5 +1,6 @@
 #include "TemplateModule.h"
 #include "Html.h"
+#include "WebResponse.h"
 
 void TemplateModule::begin(AppContext& ctx) {
   ctx_ = &ctx;
@@ -31,9 +32,10 @@ void TemplateModule::renderHome(AppContext& ctx, String& html) {
 
 void TemplateModule::renderConfig(AppContext& ctx, String& html) {
   (void)ctx;
-  html += "<div class='box'><h3>Template</h3>";
+  html += "<details class='box'>";
+  html += "<summary>Template</summary>";
   html += "<p>Add your config fields here.</p>";
-  html += "</div>";
+  html += "</details>";
 }
 
 void TemplateModule::handleConfigPost(AppContext& ctx) {
@@ -60,18 +62,19 @@ void TemplateModule::appendModuleInfoObject(AppContext& ctx, String& json) {
 }
 
 void TemplateModule::handleUiPage_(AppContext& ctx) {
-  String html = htmlHeader("Template");
-  html += "<h2>Template Module</h2>";
-  html += "<p>This is a placeholder UI page.</p>";
-  html += "<p><a href='/api/template'>JSON</a></p>";
-  html += htmlFooter();
-  ctx.server.send(200, "text/html", html);
+  auto res = beginChunkedHtml(ctx.server, F("Template"));
+  auto& out = res.out();
+  out.print(F("<h2>Template Module</h2>"));
+  out.print(F("<p>This is a placeholder UI page.</p>"));
+  out.print(F("<p><a href='/api/template'>JSON</a></p>"));
+  out.print(htmlFooter());
 }
 
 void TemplateModule::handleApi_(AppContext& ctx) {
-  String json = "{";
-  json += "\"name\":\"template\",";
-  json += "\"ok\":true";
-  json += "}";
-  ctx.server.send(200, "application/json", json);
+  auto res = beginChunkedJson(ctx.server);
+  auto& out = res.out();
+  out.print(F("{"));
+  out.print(F("\"name\":\"template\","));
+  out.print(F("\"ok\":true"));
+  out.print(F("}"));
 }

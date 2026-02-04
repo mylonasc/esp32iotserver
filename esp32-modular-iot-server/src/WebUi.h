@@ -14,6 +14,7 @@ private:
   AppContext* ctx_ = nullptr; // non-owning; must outlive WebUi + route handlers
 
   void handleRoot_(AppContext& ctx);
+  void handleDiagnostics_(AppContext& ctx);
   void handleConfigGet_(AppContext& ctx);
   void handleConfigPost_(AppContext& ctx);
   void handleResetWifi_(AppContext& ctx);

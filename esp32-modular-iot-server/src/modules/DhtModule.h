@@ -1,18 +1,15 @@
 #pragma once
 #include "IModule.h"
-#include "devices/PumpController.h"
+#include "devices/DhtController.h"
 
-class HtmlOut; // forward-declare; defined in PumpModule.cpp
-
-class PumpModule : public IModule {
+class DhtModule : public IModule {
 public:
-  const char* name() const override { return "pumps"; }
+  const char* name() const override { return "dht"; }
 
   void begin(AppContext& ctx) override;
   void loop(AppContext& ctx) override;
   void registerRoutes(AppContext& ctx) override;
 
-  // Updated IModule uses Print-based render hooks
   void renderHome(AppContext& ctx, Print& out) override;
   void renderConfig(AppContext& ctx, Print& out) override;
   void handleConfigPost(AppContext& ctx) override;
@@ -29,21 +26,9 @@ public:
                          bool& rebootRequested) override;
 
 private:
-  struct PumpActionResult {
-    bool hasMessage = false;
-    bool isError = false;
-    char message[160] = {0};
-  };
-
-  PumpController pumps_;
   AppContext* ctx_ = nullptr;
+  DhtController dht_;
 
-  void handlePumpsPage_(AppContext& ctx);
-  void handlePumpsApi_(AppContext& ctx);
-
-  // Clean page helpers
-  PumpActionResult processPumpAction_(AppContext& ctx);
-  void renderStatusBox_(HtmlOut& out);
-  void renderControlForm_(HtmlOut& out, AppContext& ctx);
-  void renderActionMessage_(HtmlOut& out, const PumpActionResult& r);
+  void handleDhtPage_(AppContext& ctx);
+  void handleDhtApi_(AppContext& ctx);
 };

@@ -42,6 +42,12 @@ AppConfig ConfigStore::load() {
   cfg.soil.s2.pin     = p.getInt ("soil2_pin", 33);
   cfg.soil.s2.id      = p.getString("soil2_id", "plant_c");
 
+  cfg.dht.enabled    = p.getBool("dht_en", false);
+  cfg.dht.pin        = p.getInt ("dht_pin", 4);
+  cfg.dht.type       = p.getInt ("dht_type", 22);
+  cfg.dht.intervalMs = p.getUInt("dht_int", 2000);
+  cfg.dht.id         = p.getString("dht_id", "dht");
+
   p.end();
 
   p.begin(NS_SETTINGS, false);
@@ -87,6 +93,12 @@ void ConfigStore::save(const AppConfig& cfg) {
   p.putBool("soil2_en", cfg.soil.s2.enabled);
   p.putInt ("soil2_pin", cfg.soil.s2.pin);
   p.putString("soil2_id", cfg.soil.s2.id);
+
+  p.putBool("dht_en", cfg.dht.enabled);
+  p.putInt ("dht_pin", cfg.dht.pin);
+  p.putInt ("dht_type", cfg.dht.type);
+  p.putUInt("dht_int", cfg.dht.intervalMs);
+  p.putString("dht_id", cfg.dht.id);
 
   p.end();
 

@@ -60,6 +60,8 @@ void PumpModule::begin(AppContext& ctx) {
 
 void PumpModule::loop(AppContext& ctx) {
   (void)ctx;
+  const auto& cfg = ctx.config.pumps;
+  if (!pumps_.isRunning() && !cfg.enabledA && !cfg.enabledB && !cfg.enabledC) return;
   pumps_.loop();
 }
 
@@ -108,7 +110,8 @@ void PumpModule::renderConfig(AppContext& ctx, Print& out) {
     out.print(b);
   };
 
-  out.print(F("<div class='box'><h3>Pumps</h3>"));
+  out.print(F("<details class='box'>"));
+  out.print(F("<summary>Pumps</summary>"));
 
   // A
   out.print(F("<label><input type='checkbox' name='pumpA_en' "));
@@ -143,7 +146,7 @@ void PumpModule::renderConfig(AppContext& ctx, Print& out) {
   printInt(p.maxSecondsOn);
   out.print(F("'>"));
 
-  out.print(F("</div>"));
+  out.print(F("</details>"));
 }
 
 void PumpModule::handleConfigPost(AppContext& ctx) {
@@ -191,6 +194,100 @@ void PumpModule::writeApiStatusObject(AppContext& ctx, Print& out) {
 void PumpModule::writeModuleInfoObject(AppContext& ctx, Print& out) {
   (void)ctx;
   out.print(F("{\"name\":\"pumps\",\"ui\":\"/watering_pumps\",\"api\":\"/api/pumps\"}"));
+}
+
+void PumpModule::appendMcpTools(Print& out, bool& first) {
+  auto addTool = [&](const __FlashStringHelper* name,
+                     const __FlashStringHelper* description,
+                     const __FlashStringHelper* schema) {
+    if (!first) out.print(',');
+    first = false;
+    out.print(F("{\"name\":"));
+    out.print('"'); out.print(name); out.print(F("\","));
+    out.print(F("\"description\":"));
+    out.print('"'); out.print(description); out.print(F("\","));
+    out.print(F("\"inputSchema\":"));
+    out.print(schema);
+    out.print(F("}"));
+  };
+
+  addTool(F("pumps.status"),
+          F("Get pump runtime status (running, activePin, remainingSeconds)."),
+          F("{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}"));
+
+  addTool(F("pumps.config.get"),
+          F("Get current pump configuration (enabled flags, pins, maxSecondsOn)."),
+          F("{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}"));
+
+  addTool(F("pumps.config.set"),
+          F("Update pump configuration. Can save/apply and request reboot."),
+          F("{\"type\":\"object\",\"properties\":{"
+            "\"enabledA\":{\"type\":\"boolean\"},\"enabledB\":{\"type\":\"boolean\"},\"enabledC\":{\"type\":\"boolean\"},"
+            "\"pinA\":{\"type\":\"integer\"},\"pinB\":{\"type\":\"integer\"},\"pinC\":{\"type\":\"integer\"},"
+            "\"maxSecondsOn\":{\"type\":\"integer\"},"
+            "\"save\":{\"type\":\"boolean\"},\"apply\":{\"type\":\"boolean\"},\"reboot\":{\"type\":\"boolean\"}"
+          "},\"additionalProperties\":false}"));
+}
+
+bool PumpModule::supportsMcpTool(const char* toolName) const {
+  return strcmp(toolName, "pumps.status") == 0 ||
+         strcmp(toolName, "pumps.config.get") == 0 ||
+         strcmp(toolName, "pumps.config.set") == 0;
+}
+
+bool PumpModule::handleMcpToolCall(AppContext& ctx,
+                                  const char* toolName,
+                                  JsonObject args,
+                                  Print& out,
+                                  bool& rebootRequested) {
+  if (strcmp(toolName, "pumps.status") == 0) {
+    writeApiStatusObject(ctx, out);
+    return true;
+  }
+
+  if (strcmp(toolName, "pumps.config.get") == 0) {
+    out.print(F("{"));
+    out.print(F("\"enabledA\":")); out.print(ctx.config.pumps.enabledA ? F("true") : F("false"));
+    out.print(F(",\"enabledB\":")); out.print(ctx.config.pumps.enabledB ? F("true") : F("false"));
+    out.print(F(",\"enabledC\":")); out.print(ctx.config.pumps.enabledC ? F("true") : F("false"));
+    out.print(F(",\"pinA\":")); out.print(ctx.config.pumps.pinA);
+    out.print(F(",\"pinB\":")); out.print(ctx.config.pumps.pinB);
+    out.print(F(",\"pinC\":")); out.print(ctx.config.pumps.pinC);
+    out.print(F(",\"maxSecondsOn\":")); out.print(ctx.config.pumps.maxSecondsOn);
+    out.print(F("}"));
+    return true;
+  }
+
+  if (strcmp(toolName, "pumps.config.set") == 0) {
+    const bool save = !args.containsKey("save") || args["save"].as<bool>();
+    const bool apply = !args.containsKey("apply") || args["apply"].as<bool>();
+    const bool reboot = args.containsKey("reboot") && args["reboot"].as<bool>();
+
+    if (args.containsKey("enabledA")) ctx.config.pumps.enabledA = args["enabledA"].as<bool>();
+    if (args.containsKey("enabledB")) ctx.config.pumps.enabledB = args["enabledB"].as<bool>();
+    if (args.containsKey("enabledC")) ctx.config.pumps.enabledC = args["enabledC"].as<bool>();
+    if (args.containsKey("pinA")) ctx.config.pumps.pinA = args["pinA"].as<int>();
+    if (args.containsKey("pinB")) ctx.config.pumps.pinB = args["pinB"].as<int>();
+    if (args.containsKey("pinC")) ctx.config.pumps.pinC = args["pinC"].as<int>();
+    if (args.containsKey("maxSecondsOn")) {
+      int v = args["maxSecondsOn"].as<int>();
+      if (v < 1) v = 1;
+      if (v > 600) v = 600;
+      ctx.config.pumps.maxSecondsOn = v;
+    }
+
+    if (save) ctx.configStore.save(ctx.config);
+    if (apply) pumps_.begin(ctx.config.pumps);
+    if (reboot) rebootRequested = true;
+
+    out.print(F("{\"saved\":")); out.print(save ? F("true") : F("false"));
+    out.print(F(",\"applied\":")); out.print(apply ? F("true") : F("false"));
+    out.print(F(",\"rebooting\":")); out.print(reboot ? F("true") : F("false"));
+    out.print(F("}"));
+    return true;
+  }
+
+  return false;
 }
 
 // ----------------------------

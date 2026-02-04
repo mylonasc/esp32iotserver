@@ -6,6 +6,7 @@ This project is an ESP32 Arduino + PlatformIO skeleton designed around a **modul
 * HTTP routes (`/something`, `/api/something`)
 * UI sections on shared pages (`/` Home, `/config` Config)
 * config parsing + persistence (via `AppConfig` + `ConfigStore`)
+* MCP tools for automation (`/mcp` JSON-RPC)
 
 The goal is to **avoid signature explosion** (no more `WebUi.begin(server, cfg, pumps, servo, soil, ...)`) and keep everything extensible.
 
@@ -23,7 +24,8 @@ src/
 
   Config.h / Config.cpp    # persistent configuration (Preferences)
   WifiManager.h / .cpp     # WiFi connect + provisioning fallback
-  WebUi.h / WebUi.cpp      # shared pages (/ and /config), aggregates module UI
+   WebUi.h / WebUi.cpp      # shared pages (/ and /config), aggregates module UI
+   McpServer.h / .cpp       # MCP JSON-RPC endpoint
 
   devices/
     ...                    # reusable hardware controllers (no web/UI)
@@ -87,9 +89,9 @@ public:
   virtual void registerRoutes(AppContext& ctx) = 0;
 
   // optional
-  virtual void renderHome(AppContext& ctx, String& html);
-  virtual void renderConfig(AppContext& ctx, String& html);
-  virtual void handleConfigPost(AppContext& ctx);
+   virtual void renderHome(AppContext& ctx, Print& out);
+   virtual void renderConfig(AppContext& ctx, Print& out);
+   virtual void handleConfigPost(AppContext& ctx);
 };
 ```
 
@@ -168,9 +170,9 @@ public:
   void loop(AppContext& ctx) override;
   void registerRoutes(AppContext& ctx) override;
 
-  void renderHome(AppContext& ctx, String& html) override;
-  void renderConfig(AppContext& ctx, String& html) override;
-  void handleConfigPost(AppContext& ctx) override;
+   void renderHome(AppContext& ctx, Print& out) override;
+   void renderConfig(AppContext& ctx, Print& out) override;
+   void handleConfigPost(AppContext& ctx) override;
 
 private:
   RelayController relay_;
@@ -214,15 +216,16 @@ void RelayModule::registerRoutes(AppContext& ctx) {
 
 #### Home (`/`)
 
-Add a compact status box:
+Add a compact status box (streamed):
 
 ```cpp
-void RelayModule::renderHome(AppContext& ctx, String& html) {
-  html += "<div class='box'>";
-  html += "<b>Relay</b><br>";
-  html += "State: " + String(relay_.isOn() ? "ON" : "OFF");
-  html += "<br><a href='/relay'>Open</a>";
-  html += "</div>";
+void RelayModule::renderHome(AppContext& ctx, Print& out) {
+  out.print(F("<div class='box'>"));
+  out.print(F("<b>Relay</b><br>"));
+  out.print(F("State: "));
+  out.print(relay_.isOn() ? F("ON") : F("OFF"));
+  out.print(F("<br><a href='/relay'>Open</a>"));
+  out.print(F("</div>"));
 }
 ```
 
@@ -231,17 +234,22 @@ void RelayModule::renderHome(AppContext& ctx, String& html) {
 Add module-specific input fields:
 
 ```cpp
-void RelayModule::renderConfig(AppContext& ctx, String& html) {
+void RelayModule::renderConfig(AppContext& ctx, Print& out) {
   auto& c = ctx.config.relay;
-  html += "<div class='box'><h3>Relay</h3>";
-  html += "<label><input type='checkbox' name='relay_en' ";
-  html += (c.enabled ? "checked" : "");
-  html += "> Enabled</label>";
-  html += "<label>Pin</label>";
-  html += "<input type='number' name='relay_pin' value='" + String(c.pin) + "'>";
-  html += "<label>ID</label>";
-  html += "<input name='relay_id' value='" + c.id + "'>";
-  html += "</div>";
+  out.print(F("<details class='box'>"));
+  out.print(F("<summary>Relay</summary>"));
+  out.print(F("<label><input type='checkbox' name='relay_en' "));
+  if (c.enabled) out.print(F("checked"));
+  out.print(F("> Enabled</label>"));
+  out.print(F("<label>Pin</label>"));
+  out.print(F("<input type='number' name='relay_pin' value='"));
+  out.print(c.pin);
+  out.print(F("'>"));
+  out.print(F("<label>ID</label>"));
+  out.print(F("<input name='relay_id' value='"));
+  out.print(c.id);
+  out.print(F("'>"));
+  out.print(F("</details>"));
 }
 ```
 
@@ -267,7 +275,7 @@ void RelayModule::handleConfigPost(AppContext& ctx) {
 * WebUi saves the full config once after calling all modules’ `handleConfigPost()`:
 
   * `ctx.configStore.save(ctx.config);`
-* WebUi typically reboots after saving for clean re-init. (You can later optimize to avoid reboots.)
+* WebUi now supports **Save (Apply)** without reboot and **Save & Reboot**. It reinitializes WiFi only if credentials/hostname changed.
 
 ---
 
@@ -309,6 +317,10 @@ Use `millis()` timers, not `delay()` (except tiny delays like 2ms in the main lo
 * Avoid `new`/`delete` in loops
 * Try not to build enormous `String`s repeatedly at high frequency
 * For JSON, keep it small or serve only on request (which you already do)
+
+### Prefer Print-based rendering
+
+* Use `Print&` in `renderHome` / `renderConfig` to stream HTML and reduce heap fragmentation.
 
 ### Route naming
 
@@ -361,6 +373,29 @@ Browsers hit `/favicon.ico` and other paths. Add `server.onNotFound(...)` once i
 
 Soil sensors use ADC. Readings vary by board/pin/attenuation. Add calibration fields or attenuation settings if needed.
 
+---
+
+## MCP (Model Context Protocol) tools
+
+The server exposes a JSON-RPC MCP endpoint at:
+
+* `POST /mcp`
+
+The tool registry is modular. Each module defines its own tools and handlers, and the MCP server delegates to modules via `ModuleManager`.
+
+### Core tools
+
+* `core.info` – uptime, WiFi, IP, hostname
+* `modules.list` – module registry
+* `modules.status` – aggregated status
+
+### Module tools (examples)
+
+* `pumps.status`, `pumps.config.get`, `pumps.config.set`
+* `soil.readings`, `soil.config.get`, `soil.config.set`
+
+You can also build LangGraph agents against MCP; see `agents/` for providers and a sample agent.
+
 ### Pin safety
 
 Initialize pins in `begin()` with safe defaults:
@@ -369,4 +404,3 @@ Initialize pins in `begin()` with safe defaults:
 * inputs to INPUT
 
 ---
-

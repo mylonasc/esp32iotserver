@@ -20,6 +20,8 @@ namespace {
 void WifiManager::begin(AppConfig& cfg, ConfigStore& store) {
     cfg_ = &cfg;
     store_ = &store;
+    connectionAttempts_ = 0;
+    lastAttemptMs_ = 0;
 
     if (cfg_->ssid.length() > 0) {
         state_ = State::CONNECTING;
@@ -55,56 +57,45 @@ void WifiManager::loop() {
     }
 
     // 3. Normal State Logic
-    if (state_ == State::CONNECTED) return;
+    if (state_ == State::CONNECTED) {
+        if (WiFi.status() != WL_CONNECTED) {
+            state_ = State::CONNECTING;
+            connectionAttempts_ = 0;
+            lastAttemptMs_ = 0;
+            needsInitialization_ = true;
+        }
+        return;
+    }
 
     if (state_ == State::CONNECTING) {
         if (WiFi.status() == WL_CONNECTED) {
             state_ = State::CONNECTED;
+            connectionAttempts_ = 0;
             Serial.print(F("WiFi connected. IP: "));
             Serial.println(WiFi.localIP());
             return;
         }
 
-        if (millis() - lastAttemptMs_ >= retryIntervalMs_) {
-            attemptConnect_(); 
-        }
-    }
-    if (state_ == State::CONNECTED) {
-      // Optional: Check if we lost connection while running
-      if (WiFi.status() != WL_CONNECTED) {
-          state_ = State::CONNECTING;
-          connectionAttempts_ = 0; 
-      }
-      return;
-    }
-
-    if (state_ == State::CONNECTING) {
-        if (WiFi.status() == WL_CONNECTED) {
-            state_ = State::CONNECTED;
-            connectionAttempts_ = 0; // Reset counter on success
-            Serial.println(F("WiFi Connected!"));
-            return;
-        }
-
         uint32_t now = millis();
-        // Use a 10-second timeout per attempt
-        if (now - lastAttemptMs_ >= 10000) { 
-            connectionAttempts_++;
-            Serial.printf("Connection attempt %d/%d failed.\n", connectionAttempts_, MAX_CONN_ATTEMPTS);
-            
+        if (now - lastAttemptMs_ >= retryIntervalMs_) {
             if (connectionAttempts_ >= MAX_CONN_ATTEMPTS) {
                 Serial.println(F("Too many failures. Switching to Provisioning Mode..."));
-                resetToProvisioning(); 
-            } else {
-                attemptConnect_(); // Try again
+                resetToProvisioning();
+                return;
             }
+            attemptConnect_();
         }
+        return;
     }
 }
 
 void WifiManager::attemptConnect_() {
     lastAttemptMs_ = millis();
-    Serial.printf("Connecting to SSID: %s\n", cfg_->ssid.c_str());
+    connectionAttempts_++;
+    Serial.printf("Connecting to SSID: %s (attempt %d/%d)\n",
+                  cfg_->ssid.c_str(),
+                  connectionAttempts_,
+                  MAX_CONN_ATTEMPTS);
     
     WiFi.mode(WIFI_STA);
     WiFi.begin(cfg_->ssid.c_str(), cfg_->password.c_str());

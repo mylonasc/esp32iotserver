@@ -27,6 +27,14 @@ struct SoilConfig {
   SoilSensorConfig s2;
 };
 
+struct DhtConfig {
+  bool enabled = false;
+  int pin = 4;
+  int type = 22; // 11, 21, or 22
+  uint32_t intervalMs = 2000;
+  String id = "dht";
+};
+
 struct AppConfig {
   String hostname = "esp32";
 
@@ -37,6 +45,8 @@ struct AppConfig {
   PumpConfig pumps;
 
   SoilConfig soil;
+
+  DhtConfig dht;
 };
 
 class ConfigStore {
