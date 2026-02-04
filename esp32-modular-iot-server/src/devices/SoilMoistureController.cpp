@@ -12,6 +12,7 @@ void SoilMoistureController::begin(const SoilConfig& cfg) {
   if (r_[2].enabled) pinMode(r_[2].pin, INPUT);
 
   lastTaskMs_ = 0;
+  Serial.println("SoilMoistureController initialized.");
 }
 
 void SoilMoistureController::loop() {

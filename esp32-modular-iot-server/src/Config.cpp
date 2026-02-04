@@ -26,7 +26,6 @@ AppConfig ConfigStore::load() {
 
   cfg.pumps.maxSecondsOn = p.getInt("max_sec_on", 10);
 
-  // soil (MOVED UP before p.end())
   cfg.soil.intervalMs = p.getUInt("soil_int", 300);
   cfg.soil.wetRaw     = p.getInt ("soil_wet", 2300);
   cfg.soil.dryRaw     = p.getInt ("soil_dry", 4095);
@@ -45,7 +44,6 @@ AppConfig ConfigStore::load() {
 
   p.end();
 
-  // SETTINGS namespace (wifi)
   p.begin(NS_SETTINGS, false);
   cfg.ssid = p.getString("ssid", "");
   cfg.password = p.getString("password", "");

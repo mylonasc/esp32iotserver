@@ -103,7 +103,7 @@ void WifiManager::loop() {
 }
 
 void WifiManager::attemptConnect_() {
-    lafttemptMs_ = millis();
+    lastAttemptMs_ = millis();
     Serial.printf("Connecting to SSID: %s\n", cfg_->ssid.c_str());
     
     WiFi.mode(WIFI_STA);

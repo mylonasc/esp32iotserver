@@ -31,11 +31,6 @@ public:
     for (int i = 0; i < count_; ++i) modules_[i]->renderConfig(ctx, out);
   }
 
-  // --------------------------------------------------------------------------
-  // Preferred: streaming JSON aggregation (low fragmentation)
-  // Produces object body:  "pumps":{...},"other":{...}
-  // Caller is responsible for surrounding { }.
-  // --------------------------------------------------------------------------
   void writeAllApiStatus(AppContext& ctx, Print& out) {
     bool first = true;
     for (int i = 0; i < count_; ++i) {

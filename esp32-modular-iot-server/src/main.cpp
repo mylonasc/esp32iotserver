@@ -15,7 +15,7 @@
 
 // Modules
 #include "modules/PumpModule.h"
-// #include "modules/SoilMoistureModule.h"
+#include "modules/SoilMoistureModule.h"
 
 #include "esp_heap_caps.h"
 
@@ -46,16 +46,9 @@ WebServer server(80);
 // Change these from objects to pointers
 WifiManager wifi; // Keep this one as a standard object so it can run immediately
 
-// ConfigStore configStore;
-// AppConfig config;
-
-// // These are the "heavy" ones to defer
-// ModuleManager* modules = nullptr;
-// WebUi* ui = nullptr;
-// PumpModule* pumpModule = nullptr;
-// AppContext* app_ctx = nullptr;
-
 PumpModule pumpModule;
+SoilMoistureModule soilModule;
+
 ModuleManager modules;
 WebUi ui(modules);
 ConfigStore configStore;
@@ -112,29 +105,6 @@ static void registerCoreApiRoutes() {
   });
 }
 
-void startServicesOnce() {
-  if (servicesStarted) return;
-  validateHeap();
-  
-  Serial.println(F("[MEM] Allocating modules..."));
-  
-  // Allocate in a specific order
-  modules.add(pumpModule);
-  
-
-  // CRITICAL: Initialize modules BEFORE registering routes
-  modules.beginAll(app_ctx);
-
-  // Register routes
-  ui.registerRoutes(app_ctx);
-  modules.registerAllRoutes(app_ctx);
-  registerCoreApiRoutes();
-  Serial.printf("DEBUG: app_ctx: %p, modules: %p, ui: %p\n", (void*)&app_ctx, (void*)&modules, (void*)&ui);
-  server.begin();
-  servicesStarted = true;
-  Serial.println(F("System fully initialized."));
-}
-
 
 void setup() {
   printHeap("boot");
@@ -146,7 +116,6 @@ void setup() {
   config = configStore.load();
   wifi.begin(config, configStore);
 }
-
 
 void loop() {
   wifi.loop();
@@ -161,6 +130,7 @@ void loop() {
         validateHeap();
         // 3. ONLY NOW run the heavy logic
         modules.add(pumpModule);
+        modules.add(soilModule);
         modules.beginAll(app_ctx);
         ui.registerRoutes(app_ctx);
         modules.registerAllRoutes(app_ctx);
