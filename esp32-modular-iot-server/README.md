@@ -297,7 +297,6 @@ void setup() {
 }
 ```
 
-That’s it. No other signatures change.
 
 ---
 
