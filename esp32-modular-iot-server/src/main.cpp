@@ -109,6 +109,18 @@ static void registerCoreApiRoutes() {
   mcp.registerRoutes(app_ctx, modules);
 }
 
+static void startMdns(const String& hostname) {
+  if (hostname.length() == 0) return;
+  if (!MDNS.begin(hostname.c_str())) {
+    Serial.println(F("mDNS failed to start"));
+    return;
+  }
+  MDNS.addService("http", "tcp", 80);
+  Serial.print(F("mDNS started: "));
+  Serial.print(hostname);
+  Serial.println(F(".local"));
+}
+
 
 void setup() {
   printHeap("boot");
@@ -140,6 +152,7 @@ void loop() {
         ui.registerRoutes(app_ctx);
         modules.registerAllRoutes(app_ctx);
         registerCoreApiRoutes();
+        startMdns(app_ctx.config.hostname);
         
         server.begin();
         servicesStarted = true;
