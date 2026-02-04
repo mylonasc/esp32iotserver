@@ -14,6 +14,7 @@ public:
   void renderConfig(AppContext& ctx, Print& out) override;
   void writeApiStatusObject(AppContext& ctx, Print& out) override;
   void writeModuleInfoObject(AppContext& ctx, Print& out) override;
+  void writeMetrics(AppContext& ctx, Print& out) override;
 
   void renderHome(AppContext& ctx, String& html) override;
   void renderConfig(AppContext& ctx, String& html) override;

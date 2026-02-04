@@ -21,6 +21,7 @@ inline String htmlHeader(const String& title) {
   s += "<div>";
   s += "<a href='/'>Home</a>";
   s += "<a href='/watering_pumps'>Pumps</a>";
+  s += "<a href='/relays'>Relays</a>";
   s += "<a href='/diag'>Diagnostics</a>";
   s += "<a href='/config'>Config</a>";
   s += "</div><hr>";

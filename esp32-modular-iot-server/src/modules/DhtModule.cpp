@@ -137,6 +137,30 @@ void DhtModule::writeModuleInfoObject(AppContext& ctx, Print& out) {
   out.print(F("{\"name\":\"dht\",\"ui\":\"/dht\",\"api\":\"/api/dht\"}"));
 }
 
+void DhtModule::writeMetrics(AppContext& ctx, Print& out) {
+  const auto& cfg = ctx.config.dht;
+  if (!cfg.enabled) return;
+
+  out.print(F("esp32_dht_sensor_enabled{id=\""));
+  printJsonString_(out, cfg.id);
+  out.print(F("\"} 1\n"));
+
+  const auto& r = dht_.reading();
+  if (!r.hasValue) return;
+
+  out.print(F("esp32_dht_temp_c{id=\""));
+  printJsonString_(out, cfg.id);
+  out.print(F("\"} "));
+  out.print(r.temperatureC);
+  out.print('\n');
+
+  out.print(F("esp32_dht_humidity_percent{id=\""));
+  printJsonString_(out, cfg.id);
+  out.print(F("\"} "));
+  out.print(r.humidity);
+  out.print('\n');
+}
+
 void DhtModule::appendMcpTools(Print& out, bool& first) {
   auto addTool = [&](const __FlashStringHelper* name,
                      const __FlashStringHelper* description,

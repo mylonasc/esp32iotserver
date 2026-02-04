@@ -48,6 +48,16 @@ AppConfig ConfigStore::load() {
   cfg.dht.intervalMs = p.getUInt("dht_int", 2000);
   cfg.dht.id         = p.getString("dht_id", "dht");
 
+  cfg.relays.r0.enabled = p.getBool("relay0_en", false);
+  cfg.relays.r0.pin     = p.getInt ("relay0_pin", 23);
+  cfg.relays.r0.id      = p.getString("relay0_id", "relay_a");
+  cfg.relays.r1.enabled = p.getBool("relay1_en", false);
+  cfg.relays.r1.pin     = p.getInt ("relay1_pin", 22);
+  cfg.relays.r1.id      = p.getString("relay1_id", "relay_b");
+  cfg.relays.r2.enabled = p.getBool("relay2_en", false);
+  cfg.relays.r2.pin     = p.getInt ("relay2_pin", 21);
+  cfg.relays.r2.id      = p.getString("relay2_id", "relay_c");
+
   p.end();
 
   p.begin(NS_SETTINGS, false);
@@ -99,6 +109,16 @@ void ConfigStore::save(const AppConfig& cfg) {
   p.putInt ("dht_type", cfg.dht.type);
   p.putUInt("dht_int", cfg.dht.intervalMs);
   p.putString("dht_id", cfg.dht.id);
+
+  p.putBool("relay0_en", cfg.relays.r0.enabled);
+  p.putInt ("relay0_pin", cfg.relays.r0.pin);
+  p.putString("relay0_id", cfg.relays.r0.id);
+  p.putBool("relay1_en", cfg.relays.r1.enabled);
+  p.putInt ("relay1_pin", cfg.relays.r1.pin);
+  p.putString("relay1_id", cfg.relays.r1.id);
+  p.putBool("relay2_en", cfg.relays.r2.enabled);
+  p.putInt ("relay2_pin", cfg.relays.r2.pin);
+  p.putString("relay2_id", cfg.relays.r2.id);
 
   p.end();
 

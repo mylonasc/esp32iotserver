@@ -16,6 +16,7 @@ public:
 
   void writeApiStatusObject(AppContext& ctx, Print& out) override;
   void writeModuleInfoObject(AppContext& ctx, Print& out) override;
+  void writeMetrics(AppContext& ctx, Print& out) override;
 
   void appendMcpTools(Print& out, bool& first) override;
   bool supportsMcpTool(const char* toolName) const override;

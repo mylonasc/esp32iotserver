@@ -7,8 +7,7 @@ This project is an ESP32 Arduino + PlatformIO skeleton designed around a **modul
 * UI sections on shared pages (`/` Home, `/config` Config)
 * config parsing + persistence (via `AppConfig` + `ConfigStore`)
 * MCP tools for automation (`/mcp` JSON-RPC)
-
-The goal is to **avoid signature explosion** (no more `WebUi.begin(server, cfg, pumps, servo, soil, ...)`) and keep everything extensible.
+* Prometheus metrics endpoint (`/metrics`) contributed per-module
 
 ---
 
@@ -26,6 +25,7 @@ src/
   WifiManager.h / .cpp     # WiFi connect + provisioning fallback
    WebUi.h / WebUi.cpp      # shared pages (/ and /config), aggregates module UI
    McpServer.h / .cpp       # MCP JSON-RPC endpoint
+   /metrics                # Prometheus text metrics (per-module)
 
   devices/
     ...                    # reusable hardware controllers (no web/UI)
@@ -395,6 +395,16 @@ The tool registry is modular. Each module defines its own tools and handlers, an
 * `soil.readings`, `soil.config.get`, `soil.config.set`
 
 You can also build LangGraph agents against MCP; see `agents/` for providers and a sample agent.
+
+---
+
+## Metrics
+
+The server exposes a Prometheus-compatible endpoint:
+
+* `GET /metrics`
+
+Each module can emit metrics via `IModule::writeMetrics(AppContext&, Print&)`. Disabled devices are omitted.
 
 ### Pin safety
 

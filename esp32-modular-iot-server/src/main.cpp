@@ -13,12 +13,14 @@
 #include "ModuleManager.h"
 #include "WebUi.h"
 #include "WebResponse.h"
+#include "WebServerPrint.h"
 #include "McpServer.h"
 
 // Modules
 #include "modules/PumpModule.h"
 #include "modules/SoilMoistureModule.h"
 #include "modules/DhtModule.h"
+#include "modules/RelayModule.h"
 
 #include "esp_heap_caps.h"
 
@@ -52,6 +54,7 @@ WifiManager wifi; // Keep this one as a standard object so it can run immediatel
 PumpModule pumpModule;
 SoilMoistureModule soilModule;
 DhtModule dhtModule;
+RelayModule relayModule;
 
 ModuleManager modules;
 WebUi ui(modules);
@@ -107,6 +110,15 @@ static void registerCoreApiRoutes() {
 
   // MCP JSON-RPC endpoint
   mcp.registerRoutes(app_ctx, modules);
+
+  // Prometheus /metrics endpoint
+  server.on("/metrics", HTTP_GET, []() {
+    server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+    server.send(200, "text/plain; version=0.0.4", "");
+    WebServerPrint out(server);
+    modules.writeAllMetrics(app_ctx, out);
+    server.sendContent("");
+  });
 }
 
 static void startMdns(const String& hostname) {
@@ -148,6 +160,7 @@ void loop() {
   modules.add(pumpModule);
   modules.add(soilModule);
   modules.add(dhtModule);
+  modules.add(relayModule);
         modules.beginAll(app_ctx);
         ui.registerRoutes(app_ctx);
         modules.registerAllRoutes(app_ctx);

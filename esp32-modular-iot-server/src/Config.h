@@ -35,6 +35,18 @@ struct DhtConfig {
   String id = "dht";
 };
 
+struct RelayChannelConfig {
+  bool enabled = false;
+  int pin = 23;
+  String id = "relay";
+};
+
+struct RelaysConfig {
+  RelayChannelConfig r0;
+  RelayChannelConfig r1;
+  RelayChannelConfig r2;
+};
+
 struct AppConfig {
   String hostname = "esp32";
 
@@ -47,6 +59,8 @@ struct AppConfig {
   SoilConfig soil;
 
   DhtConfig dht;
+
+  RelaysConfig relays;
 };
 
 class ConfigStore {

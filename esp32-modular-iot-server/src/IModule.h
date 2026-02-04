@@ -35,6 +35,13 @@ public:
     out.print(F("{}"));
   }
 
+  // Contribute metrics in Prometheus text format (no surrounding header).
+  // Modules should only emit lines for enabled/active devices.
+  virtual void writeMetrics(AppContext& ctx, Print& out) {
+    (void)ctx;
+    (void)out;
+  }
+
   // Contribute one entry object to /api/modules array.
   // Default provides {"name":"..."}; modules can add ui/api paths, etc.
   virtual void writeModuleInfoObject(AppContext& ctx, Print& out) {

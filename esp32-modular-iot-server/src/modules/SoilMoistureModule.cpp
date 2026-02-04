@@ -126,9 +126,43 @@ void SoilMoistureModule::writeApiStatusObject(AppContext& ctx, Print& out) {
   out.print(F("}"));
 }
 
+static void printJsonStringEscaped_(Print& out, const String& in);
+
 void SoilMoistureModule::writeModuleInfoObject(AppContext& ctx, Print& out) {
   (void)ctx;
   out.print(F("{\"name\":\"soil\",\"ui\":\"/soil\",\"api\":\"/api/soil\"}"));
+}
+
+void SoilMoistureModule::writeMetrics(AppContext& ctx, Print& out) {
+  const auto& cfg = ctx.config.soil;
+  const auto& a = soil_.r0();
+  const auto& b = soil_.r1();
+  const auto& c = soil_.r2();
+
+  auto emit = [&](const SoilMoistureController::Reading& r) {
+    if (!r.enabled) return;
+    out.print(F("esp32_soil_sensor_enabled{id=\""));
+    printJsonStringEscaped_(out, r.id);
+    out.print(F("\"} 1\n"));
+
+    if (!r.hasValue) return;
+    out.print(F("esp32_soil_moisture_percent{id=\""));
+    printJsonStringEscaped_(out, r.id);
+    out.print(F("\"} "));
+    out.print(r.percent);
+    out.print('\n');
+
+    out.print(F("esp32_soil_raw{id=\""));
+    printJsonStringEscaped_(out, r.id);
+    out.print(F("\"} "));
+    out.print(r.raw);
+    out.print('\n');
+  };
+
+  if (cfg.intervalMs == 0) return;
+  emit(a);
+  emit(b);
+  emit(c);
 }
 
 void SoilMoistureModule::appendApiStatusObject(AppContext& ctx, String& json) {
@@ -317,7 +351,9 @@ void SoilMoistureModule::handleSoilPage_(AppContext& ctx) {
   out.print(htmlFooter());
 }
 
-static void printJsonString_(Print& out, const String& in) {
+static void printJsonStringEscaped_(Print& out, const String& in);
+
+static void printJsonStringEscaped_(Print& out, const String& in) {
   for (size_t i = 0; i < in.length(); ++i) {
     char c = in[i];
     if (c == '"') out.print(F("\\\""));
@@ -328,7 +364,7 @@ static void printJsonString_(Print& out, const String& in) {
 
 static void printJsonStringQuoted_(Print& out, const String& in) {
   out.print('"');
-  printJsonString_(out, in);
+  printJsonStringEscaped_(out, in);
   out.print('"');
 }
 
@@ -349,7 +385,7 @@ void SoilMoistureModule::appendSensorJson_(Print& out, const SoilMoistureControl
   out.print(F("\"enabled\":"));
   out.print(r.enabled ? F("true") : F("false"));
   out.print(F(",\"id\":\""));
-  printJsonString_(out, r.id);
+  printJsonStringEscaped_(out, r.id);
   out.print(F("\","));
   out.print(F("\"pin\":"));
   out.print(r.pin);

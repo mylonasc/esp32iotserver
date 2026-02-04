@@ -196,6 +196,19 @@ void PumpModule::writeModuleInfoObject(AppContext& ctx, Print& out) {
   out.print(F("{\"name\":\"pumps\",\"ui\":\"/watering_pumps\",\"api\":\"/api/pumps\"}"));
 }
 
+void PumpModule::writeMetrics(AppContext& ctx, Print& out) {
+  const auto& cfg = ctx.config.pumps;
+  if (!pumps_.isRunning() && !cfg.enabledA && !cfg.enabledB && !cfg.enabledC) return;
+
+  out.print(F("esp32_pumps_running "));
+  out.print(pumps_.isRunning() ? F("1") : F("0"));
+  out.print('\n');
+
+  out.print(F("esp32_pumps_remaining_seconds "));
+  out.print(pumps_.remainingSeconds());
+  out.print('\n');
+}
+
 void PumpModule::appendMcpTools(Print& out, bool& first) {
   auto addTool = [&](const __FlashStringHelper* name,
                      const __FlashStringHelper* description,

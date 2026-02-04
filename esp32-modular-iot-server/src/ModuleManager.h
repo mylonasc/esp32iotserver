@@ -44,6 +44,12 @@ public:
     }
   }
 
+  void writeAllMetrics(AppContext& ctx, Print& out) {
+    for (int i = 0; i < count_; ++i) {
+      modules_[i]->writeMetrics(ctx, out);
+    }
+  }
+
   // Produces array body:  {...},{...}
   // Caller is responsible for surrounding [ ].
   void writeAllModuleInfo(AppContext& ctx, Print& out) {

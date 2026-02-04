@@ -1,18 +1,15 @@
 #pragma once
 #include "IModule.h"
-#include "devices/PumpController.h"
+#include "devices/RelayController.h"
 
-class HtmlOut; // forward-declare; defined in PumpModule.cpp
-
-class PumpModule : public IModule {
+class RelayModule : public IModule {
 public:
-  const char* name() const override { return "pumps"; }
+  const char* name() const override { return "relays"; }
 
   void begin(AppContext& ctx) override;
   void loop(AppContext& ctx) override;
   void registerRoutes(AppContext& ctx) override;
 
-  // Updated IModule uses Print-based render hooks
   void renderHome(AppContext& ctx, Print& out) override;
   void renderConfig(AppContext& ctx, Print& out) override;
   void handleConfigPost(AppContext& ctx) override;
@@ -30,21 +27,13 @@ public:
                          bool& rebootRequested) override;
 
 private:
-  struct PumpActionResult {
-    bool hasMessage = false;
-    bool isError = false;
-    char message[160] = {0};
-  };
-
-  PumpController pumps_;
   AppContext* ctx_ = nullptr;
+  RelayController relays_;
 
-  void handlePumpsPage_(AppContext& ctx);
-  void handlePumpsApi_(AppContext& ctx);
+  void handleRelaysPage_(AppContext& ctx);
+  void handleRelaysApi_(AppContext& ctx);
+  void handleRelaySet_(AppContext& ctx);
 
-  // Clean page helpers
-  PumpActionResult processPumpAction_(AppContext& ctx);
-  void renderStatusBox_(HtmlOut& out);
-  void renderControlForm_(HtmlOut& out, AppContext& ctx);
-  void renderActionMessage_(HtmlOut& out, const PumpActionResult& r);
+  int resolveRelayIndex_(const String& token) const;
+  int resolveRelayIndex_(JsonObject args) const;
 };
