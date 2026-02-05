@@ -1,0 +1,14 @@
+[project]
+name = "esp32-apps"
+version = "0.1.0"
+description = "Apps and tools for the ESP32 modular server"
+requires-python = ">=3.10"
+dependencies = [
+  "requests>=2.31.0",
+  "opentelemetry-sdk>=1.24.0",
+  "opentelemetry-exporter-otlp-proto-http>=1.24.0",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"

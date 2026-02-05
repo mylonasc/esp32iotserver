@@ -1,5 +1,6 @@
 #include "PumpModule.h"
 #include "Html.h"
+#include "WebResponse.h"
 #include <Arduino.h>
 #include <string.h>   // strlcpy (ESP32 has it), memcpy
 
@@ -414,30 +415,9 @@ void PumpModule::handlePumpsPage_(AppContext& ctx) {
 // You can keep this as a simple String response, or stream it too.
 // Here: stream it (small, no fragmentation).
 void PumpModule::handlePumpsApi_(AppContext& ctx) {
-  auto& s = ctx.server;
-
-  s.setContentLength(CONTENT_LENGTH_UNKNOWN);
-  s.send(200, "application/json", "");
-  s.sendContent("{");
-  // Reuse the object writer to keep one source of truth
-  s.sendContent("\"pumps\":");
-  // We need a Print sink; easiest is to call writeApiStatusObject using a tiny adapter.
-  // Since WebServer isn't Print in your environment, just emit directly:
-  s.sendContent("\"running\":");
-  s.sendContent(pumps_.isRunning() ? "true" : "false");
-  s.sendContent(",\"activePin\":");
-  {
-    char b[16]; itoa(pumps_.activePin(), b, 10);
-    s.sendContent(b);
-  }
-  s.sendContent(",\"remainingSeconds\":");
-  {
-    char buf[24];
-    dtostrf(pumps_.remainingSeconds(), 0, 2, buf);
-    char* p = buf; while (*p == ' ') ++p;
-    s.sendContent(p);
-  }
-  s.sendContent("}");
-  s.sendContent("}");
-  s.client().stop();
+  auto res = beginChunkedJson(ctx.server);
+  auto& out = res.out();
+  out.print(F("{\"pumps\":"));
+  writeApiStatusObject(ctx, out);
+  out.print(F("}"));
 }
