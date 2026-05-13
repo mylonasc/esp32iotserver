@@ -2,7 +2,7 @@
 #include "IModule.h"
 #include "devices/PumpController.h"
 
-class HtmlOut; // forward-declare; defined in PumpModule.cpp
+class HtmlResponseOut;
 
 class PumpModule : public IModule {
 public:
@@ -44,7 +44,7 @@ private:
 
   // Clean page helpers
   PumpActionResult processPumpAction_(AppContext& ctx);
-  void renderStatusBox_(HtmlOut& out);
-  void renderControlForm_(HtmlOut& out, AppContext& ctx);
-  void renderActionMessage_(HtmlOut& out, const PumpActionResult& r);
+  void renderStatusBox_(HtmlResponseOut& out);
+  void renderControlForm_(HtmlResponseOut& out, AppContext& ctx);
+  void renderActionMessage_(HtmlResponseOut& out, const PumpActionResult& r);
 };

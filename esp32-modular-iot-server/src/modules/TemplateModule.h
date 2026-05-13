@@ -10,12 +10,12 @@ public:
   void loop(AppContext& ctx) override;
   void registerRoutes(AppContext& ctx) override;
 
-  void renderHome(AppContext& ctx, String& html) override;
-  void renderConfig(AppContext& ctx, String& html) override;
+  void renderHome(AppContext& ctx, Print& out) override;
+  void renderConfig(AppContext& ctx, Print& out) override;
   void handleConfigPost(AppContext& ctx) override;
 
-  void appendApiStatusObject(AppContext& ctx, String& json) override;
-  void appendModuleInfoObject(AppContext& ctx, String& json) override;
+  void writeApiStatusObject(AppContext& ctx, Print& out) override;
+  void writeModuleInfoObject(AppContext& ctx, Print& out) override;
 
 private:
   AppContext* ctx_ = nullptr;

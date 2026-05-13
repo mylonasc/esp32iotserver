@@ -1,55 +1,9 @@
 #include "PumpModule.h"
 #include "Html.h"
+#include "HtmlResponse.h"
 #include "WebResponse.h"
 #include <Arduino.h>
 #include <string.h>   // strlcpy (ESP32 has it), memcpy
-
-// ----------------------------
-// Local HtmlOut helper (streams to WebServer via sendContent)
-// ----------------------------
-#include <WebServer.h>
-
-class HtmlOut {
-public:
-  explicit HtmlOut(WebServer& s) : s_(s) {}
-
-  void begin(const __FlashStringHelper* title) {
-    s_.setContentLength(CONTENT_LENGTH_UNKNOWN);
-    s_.send(200, "text/html", "");
-    s_.sendContent(htmlHeader(title));
-  }
-
-  void end() {
-    s_.sendContent(htmlFooter());
-    s_.client().stop();
-  }
-
-  void p(const __FlashStringHelper* t) { s_.sendContent(t); }
-  void p(const char* t)                { s_.sendContent(t); }
-  void p(const String& t)              { s_.sendContent(t); }
-
-  void pChar(char c) {
-    char buf[2] = {c, 0};
-    s_.sendContent(buf);
-  }
-
-  void pInt(int v) {
-    char buf[16];
-    itoa(v, buf, 10);
-    s_.sendContent(buf);
-  }
-
-  void pFloat(float v, int decimals) {
-    char buf[24];
-    dtostrf(v, 0, decimals, buf);
-    char* p = buf;
-    while (*p == ' ') ++p;
-    s_.sendContent(p);
-  }
-
-private:
-  WebServer& s_;
-};
 
 // ----------------------------
 // PumpModule public API
@@ -346,7 +300,7 @@ PumpModule::PumpActionResult PumpModule::processPumpAction_(AppContext& ctx) {
   return r;
 }
 
-void PumpModule::renderStatusBox_(HtmlOut& out) {
+void PumpModule::renderStatusBox_(HtmlResponseOut& out) {
   out.p(F("<div class='box'>"));
 
   out.p(F("<b>Running:</b> "));
@@ -362,7 +316,7 @@ void PumpModule::renderStatusBox_(HtmlOut& out) {
   out.p(F("</div>"));
 }
 
-void PumpModule::renderControlForm_(HtmlOut& out, AppContext& ctx) {
+void PumpModule::renderControlForm_(HtmlResponseOut& out, AppContext& ctx) {
   const auto& cfg = ctx.config.pumps;
 
   out.p(F("<form method='GET' action='/watering_pumps'>"));
@@ -383,7 +337,7 @@ void PumpModule::renderControlForm_(HtmlOut& out, AppContext& ctx) {
   out.p(F("</form>"));
 }
 
-void PumpModule::renderActionMessage_(HtmlOut& out, const PumpActionResult& r) {
+void PumpModule::renderActionMessage_(HtmlResponseOut& out, const PumpActionResult& r) {
   if (!r.hasMessage) return;
 
   if (r.isError) {
@@ -398,7 +352,7 @@ void PumpModule::renderActionMessage_(HtmlOut& out, const PumpActionResult& r) {
 }
 
 void PumpModule::handlePumpsPage_(AppContext& ctx) {
-  HtmlOut out(ctx.server);
+  HtmlResponseOut out(ctx.server);
 
   out.begin(F("Pumps"));
   out.p(F("<h2>Watering Pumps</h2>"));

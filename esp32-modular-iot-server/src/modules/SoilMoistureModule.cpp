@@ -165,106 +165,10 @@ void SoilMoistureModule::writeMetrics(AppContext& ctx, Print& out) {
   emit(c);
 }
 
-void SoilMoistureModule::appendApiStatusObject(AppContext& ctx, String& json) {
-  (void)ctx;
-  json += "{";
-  json += "\"api\":\"/api/soil\",";
-  json += "\"ui\":\"/soil\",";
-  json += "\"enabledCount\":";
-  int enabled = 0;
-  if (soil_.r0().enabled) enabled++;
-  if (soil_.r1().enabled) enabled++;
-  if (soil_.r2().enabled) enabled++;
-  json += String(enabled);
-  json += "}";
-}
-
-void SoilMoistureModule::appendModuleInfoObject(AppContext& ctx, String& json) {
-  (void)ctx;
-  json += "{";
-  json += "\"name\":\"soil\",";
-  json += "\"ui\":\"/soil\",";
-  json += "\"api\":\"/api/soil\"";
-  json += "}";
-}
-
 void SoilMoistureModule::registerRoutes(AppContext& ctx) {
   ctx_ = &ctx;
   ctx.server.on("/soil", HTTP_GET, [&ctx, this]() { handleSoilPage_(ctx); });
   ctx.server.on("/api/soil", HTTP_GET, [&ctx, this]() { handleSoilApi_(ctx); });
-}
-
-void SoilMoistureModule::renderHome(AppContext& ctx, String& html) {
-  (void)ctx;
-  const uint32_t now = nowMs();
-
-  html += "<div class='box'>";
-  html += "<b>Soil Moisture</b><br>";
-
-  const auto& a = soil_.r0();
-  const auto& b = soil_.r1();
-  const auto& c = soil_.r2();
-
-  auto addLine = [&](const SoilMoistureController::Reading& r) {
-    if (!r.enabled) return;
-    html += r.id + ": ";
-    if (!r.hasValue) html += "—";
-    else html += String(r.percent) + "%";
-    html += "<br>";
-  };
-
-  addLine(a);
-  addLine(b);
-  addLine(c);
-
-  html += "<a href='/soil'>Open</a>";
-  html += "</div>";
-}
-
-void SoilMoistureModule::renderConfig(AppContext& ctx, String& html) {
-  auto& sc = ctx.config.soil;
-
-  html += "<div class='box'><h3>Soil Moisture</h3>";
-  html += "<label>Read interval (ms)</label>";
-  html += "<input type='number' name='soil_int' min='50' value='" + String(sc.intervalMs) + "'>";
-
-  html += "<label>Calibration wetRaw</label>";
-  html += "<input type='number' name='soil_wet' value='" + String(sc.wetRaw) + "'>";
-
-  html += "<label>Calibration dryRaw</label>";
-  html += "<input type='number' name='soil_dry' value='" + String(sc.dryRaw) + "'>";
-
-  // Sensor 0
-  html += "<hr><b>Sensor 1</b><br>";
-  html += "<label><input type='checkbox' name='soil0_en' ";
-  html += (sc.s0.enabled ? "checked" : "");
-  html += "> Enabled</label>";
-  html += "<label>Pin</label>";
-  html += "<input type='number' name='soil0_pin' value='" + String(sc.s0.pin) + "'>";
-  html += "<label>ID</label>";
-  html += "<input name='soil0_id' value='" + sc.s0.id + "'>";
-
-  // Sensor 1
-  html += "<hr><b>Sensor 2</b><br>";
-  html += "<label><input type='checkbox' name='soil1_en' ";
-  html += (sc.s1.enabled ? "checked" : "");
-  html += "> Enabled</label>";
-  html += "<label>Pin</label>";
-  html += "<input type='number' name='soil1_pin' value='" + String(sc.s1.pin) + "'>";
-  html += "<label>ID</label>";
-  html += "<input name='soil1_id' value='" + sc.s1.id + "'>";
-
-  // Sensor 2
-  html += "<hr><b>Sensor 3</b><br>";
-  html += "<label><input type='checkbox' name='soil2_en' ";
-  html += (sc.s2.enabled ? "checked" : "");
-  html += "> Enabled</label>";
-  html += "<label>Pin</label>";
-  html += "<input type='number' name='soil2_pin' value='" + String(sc.s2.pin) + "'>";
-  html += "<label>ID</label>";
-  html += "<input name='soil2_id' value='" + sc.s2.id + "'>";
-
-  html += "</div>";
 }
 
 void SoilMoistureModule::handleConfigPost(AppContext& ctx) {

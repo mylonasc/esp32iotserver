@@ -22,20 +22,20 @@ void TemplateModule::registerRoutes(AppContext& ctx) {
   ctx.server.on("/api/template", HTTP_GET, [this]() { handleApi_(*ctx_); });
 }
 
-void TemplateModule::renderHome(AppContext& ctx, String& html) {
+void TemplateModule::renderHome(AppContext& ctx, Print& out) {
   (void)ctx;
-  html += "<div class='box'>";
-  html += "<b>Template</b><br>";
-  html += "<a href='/template'>Open</a>";
-  html += "</div>";
+  out.print(F("<div class='box'>"));
+  out.print(F("<b>Template</b><br>"));
+  out.print(F("<a href='/template'>Open</a>"));
+  out.print(F("</div>"));
 }
 
-void TemplateModule::renderConfig(AppContext& ctx, String& html) {
+void TemplateModule::renderConfig(AppContext& ctx, Print& out) {
   (void)ctx;
-  html += "<details class='box'>";
-  html += "<summary>Template</summary>";
-  html += "<p>Add your config fields here.</p>";
-  html += "</details>";
+  out.print(F("<details class='box'>"));
+  out.print(F("<summary>Template</summary>"));
+  out.print(F("<p>Add your config fields here.</p>"));
+  out.print(F("</details>"));
 }
 
 void TemplateModule::handleConfigPost(AppContext& ctx) {
@@ -44,21 +44,14 @@ void TemplateModule::handleConfigPost(AppContext& ctx) {
   // Then apply immediately (re-init device/controller)
 }
 
-void TemplateModule::appendApiStatusObject(AppContext& ctx, String& json) {
+void TemplateModule::writeApiStatusObject(AppContext& ctx, Print& out) {
   (void)ctx;
-  json += "{";
-  json += "\"ui\":\"/template\",";
-  json += "\"api\":\"/api/template\"";
-  json += "}";
+  out.print(F("{\"ui\":\"/template\",\"api\":\"/api/template\"}"));
 }
 
-void TemplateModule::appendModuleInfoObject(AppContext& ctx, String& json) {
+void TemplateModule::writeModuleInfoObject(AppContext& ctx, Print& out) {
   (void)ctx;
-  json += "{";
-  json += "\"name\":\"template\",";
-  json += "\"ui\":\"/template\",";
-  json += "\"api\":\"/api/template\"";
-  json += "}";
+  out.print(F("{\"name\":\"template\",\"ui\":\"/template\",\"api\":\"/api/template\"}"));
 }
 
 void TemplateModule::handleUiPage_(AppContext& ctx) {

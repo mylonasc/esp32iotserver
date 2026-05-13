@@ -15,13 +15,7 @@ public:
   void writeApiStatusObject(AppContext& ctx, Print& out) override;
   void writeModuleInfoObject(AppContext& ctx, Print& out) override;
   void writeMetrics(AppContext& ctx, Print& out) override;
-
-  void renderHome(AppContext& ctx, String& html) override;
-  void renderConfig(AppContext& ctx, String& html) override;
   void handleConfigPost(AppContext& ctx) override;
-
-  void appendApiStatusObject(AppContext& ctx, String& json) override;
-  void appendModuleInfoObject(AppContext& ctx, String& json) override;
 
   const SoilMoistureController& controller() const { return soil_; }
 

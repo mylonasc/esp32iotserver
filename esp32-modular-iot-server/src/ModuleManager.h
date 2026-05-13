@@ -98,59 +98,8 @@ public:
     for (int i = 0; i < count_; ++i) modules_[i]->handleConfigPost(ctx);
   }
 
-#if !defined(MODULEMANAGER_DISABLE_STRING_API)
-  // --------------------------------------------------------------------------
-  // Back-compat: String-based callers can still use these.
-  // These are thin adapters that go through Print-based path.
-  // Note: still can allocate due to String growth, but avoids duplicate logic.
-  // --------------------------------------------------------------------------
-
-  void renderHome(AppContext& ctx, String& html) {
-    StringPrint sp(html);
-    renderHome(ctx, sp);
-  }
-
-  void renderConfig(AppContext& ctx, String& html) {
-    StringPrint sp(html);
-    renderConfig(ctx, sp);
-  }
-
-  void appendAllApiStatus(AppContext& ctx, String& json) {
-    StringPrint sp(json);
-    writeAllApiStatus(ctx, sp);
-  }
-
-  void appendAllModuleInfo(AppContext& ctx, String& json) {
-    StringPrint sp(json);
-    writeAllModuleInfo(ctx, sp);
-  }
-#endif
-
 private:
   static constexpr int MAX_ = 12;
   IModule* modules_[MAX_] = {nullptr};
   int count_ = 0;
-
-#if !defined(MODULEMANAGER_DISABLE_STRING_API)
-  // Local helper for adapting Print output into a String efficiently.
-  class StringPrint : public Print {
-  public:
-    explicit StringPrint(String& s) : s_(s) {}
-
-    size_t write(uint8_t b) override {
-      s_ += static_cast<char>(b);
-      return 1;
-    }
-
-    size_t write(const uint8_t* buf, size_t size) override {
-      if (!buf || !size) return 0;
-      // Append in one call to avoid per-byte overhead
-      s_.concat(reinterpret_cast<const char*>(buf), size);
-      return size;
-    }
-
-  private:
-    String& s_;
-  };
-#endif
 };

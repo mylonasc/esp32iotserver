@@ -1,37 +1,11 @@
 #include "WebUi.h"
 #include "WebServerPrint.h"
+#include "HtmlResponse.h"
 #include <WiFi.h>
 #include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "Html.h"
-
-// Improved HtmlOut: Uses internal WebServer methods more directly
-class HtmlOut {
-public:
-  explicit HtmlOut(WebServer& server) : s_(server) {}
-
-  void begin(const __FlashStringHelper* title) {
-    s_.setContentLength(CONTENT_LENGTH_UNKNOWN);
-    s_.sendHeader(F("Cache-Control"), F("no-cache"));
-    s_.send(200, "text/html", "");
-    // Ensure htmlHeader is also returning __FlashStringHelper* or is in PROGMEM
-    s_.sendContent(htmlHeader(title)); 
-  }
-
-  void end() {
-    s_.sendContent(htmlFooter());
-    s_.sendContent(""); // Explicitly send the zero-chunk to close the stream
-  }
-
-  // Use the FlashStringHelper overload primarily
-  void p(const __FlashStringHelper* t) { s_.sendContent(t); }
-  void p(const String& t)              { s_.sendContent(t); }
-  void p(const char* t)                { s_.sendContent(t); }
-
-private:
-  WebServer& s_;
-};
 
 void WebUi::registerRoutes(AppContext& ctx) {
   // Capture ctx by reference directly into the lambda
@@ -52,10 +26,14 @@ void WebUi::registerRoutes(AppContext& ctx) {
   ctx.server.on("/config", HTTP_POST, [this, &ctx]() { 
     this->handleConfigPost_(ctx); 
   });
+
+  ctx.server.on("/reset_wifi", HTTP_POST, [this, &ctx]() {
+    this->handleResetWifi_(ctx);
+  });
 }
 
 void WebUi::handleRoot_(AppContext& ctx) {
-  HtmlOut out(ctx.server);
+  HtmlResponseOut out(ctx.server);
 
   out.begin(F("Home"));
   out.p(F("<style>.box{padding:10px;border:1px solid #ccc;margin:10px 0;}</style>")); // Minified CSS
@@ -82,7 +60,7 @@ void WebUi::handleRoot_(AppContext& ctx) {
 }
 
 void WebUi::handleDiagnostics_(AppContext& ctx) {
-  HtmlOut out(ctx.server);
+  HtmlResponseOut out(ctx.server);
   const uint32_t uptimeSec = millis() / 1000;
   const size_t freeHeap = ESP.getFreeHeap();
   const size_t minFreeHeap = ESP.getMinFreeHeap();
@@ -131,7 +109,7 @@ void WebUi::handleDiagnostics_(AppContext& ctx) {
 }
 
 void WebUi::handleConfigGet_(AppContext& ctx) {
-  HtmlOut out(ctx.server);
+  HtmlResponseOut out(ctx.server);
 
   out.begin(F("Config"));
   out.p(F("<h2>Configuration</h2>"));
