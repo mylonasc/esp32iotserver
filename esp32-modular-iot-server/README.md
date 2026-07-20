@@ -1,84 +1,139 @@
-# README — Modular ESP32 Web Server (PlatformIO)
+# ESP32 Modular IoT Server
 
-This project is an ESP32 Arduino + PlatformIO skeleton designed around a **module/plugin architecture**. You can add new “peripherals” (pumps, sensors, relays, lights, etc.) as **modules** that contribute:
+This is a PlatformIO/Arduino firmware for an ESP32 that exposes local IoT devices through a browser UI, JSON APIs, Prometheus-style metrics, and an MCP JSON-RPC endpoint for automation/agents.
 
-* background logic (`loop()`)
-* HTTP routes (`/something`, `/api/something`)
-* UI sections on shared pages (`/` Home, `/config` Config)
-* config parsing + persistence (via `AppConfig` + `ConfigStore`)
-* MCP tools for automation (`/mcp` JSON-RPC)
-* Prometheus metrics endpoint (`/metrics`) contributed per-module
+The firmware is organized around a device + module architecture:
 
----
+- `src/devices/`: low-level hardware controllers for pins, sampling, and device state.
+- `src/modules/`: integrations that own devices and expose UI, HTTP routes, config handling, metrics, and MCP tools.
+- `src/main.cpp`: application entry point, WiFi/service startup, core API routes, metrics, and module registration.
+- `apps/tools/`: Python tooling for scraping ESP32 devices and exporting OpenTelemetry metrics.
+- `apps/agents/`: LangGraph/LLM helpers for working with the ESP32 MCP endpoint.
+- `test/agents/`: live-device smoke tests and sample MCP agent scripts.
 
-## Project structure
+The app is intended for trusted local-network use. HTTP, JSON API, metrics, and MCP endpoints do not implement authentication.
 
+## Current Modules
+
+| Module | Purpose | UI | JSON API | Notes |
+| --- | --- | --- | --- | --- |
+| Pumps | Controls up to 3 watering pump outputs | `/watering_pumps` | `/api/pumps` | Supports timed pump runs and all-off control. |
+| Soil moisture | Reads up to 3 analog soil sensors | `/soil` | `/api/soil` | Supports calibration and per-sensor IDs. |
+| DHT | Reads one DHT11/DHT21/DHT22 temperature/humidity sensor | `/dht` | `/api/dht` | Sensor type and interval are configurable. |
+| Relays | Controls up to 3 relay outputs | `/relays` | `/api/relays` | Also exposes `/api/relays/set` for simple state changes. |
+
+## Core Routes
+
+| Route | Method | Description |
+| --- | --- | --- |
+| `/` | GET | Home dashboard with WiFi status and module summaries. |
+| `/config` | GET | Configuration page for network and module settings. |
+| `/config` | POST | Saves configuration. Supports live apply or save-and-reboot. |
+| `/diag` | GET | Runtime diagnostics such as heap, flash, uptime, and task count. |
+| `/reset_wifi` | POST | Clears saved WiFi credentials and reboots into provisioning mode. |
+| `/api` | GET | Aggregate JSON status, including core state and module summaries. |
+| `/api/modules` | GET | Registered module metadata. |
+| `/metrics` | GET | Prometheus-compatible text metrics emitted by active modules. |
+| `/mcp` | POST | MCP-style JSON-RPC endpoint for automation tools. |
+
+## Boot Flow
+
+1. `ConfigStore` loads `AppConfig` from ESP32 Preferences.
+2. `WifiManager` starts WiFi connection if credentials exist, otherwise enters provisioning mode.
+3. While provisioning, the web server and modules are not started.
+4. After WiFi reaches `CONNECTED`, `main.cpp` registers modules, initializes them, registers routes, starts mDNS, and starts the web server.
+5. `loop()` keeps WiFi state updated, ticks each module, and calls `server.handleClient()`.
+
+mDNS is started with the configured hostname, so a device with hostname `esp32-plants` should be reachable as `http://esp32-plants.local/` on networks that support mDNS.
+
+## Configuration
+
+Configuration is persisted in ESP32 Preferences:
+
+- General device/module settings are stored in the `config` namespace.
+- WiFi credentials are stored in the `settings` namespace.
+
+The `/config` page saves all module config after each module parses its submitted fields. `Save (Apply)` applies changes without a reboot where possible. `Save & Reboot` persists settings and restarts the ESP32.
+
+Pin and value validation exists for some fields, but it is not yet centralized across every HTTP and MCP config path.
+
+## MCP Tools
+
+The server exposes an MCP-style JSON-RPC endpoint at:
+
+- `POST /mcp`
+
+Supported JSON-RPC methods:
+
+- `tools/list`: lists available tools.
+- `tools/call`: invokes one tool by name.
+
+Implemented tools:
+
+| Tool | Description |
+| --- | --- |
+| `core.info` | Device uptime, WiFi state, IP, and hostname. |
+| `modules.list` | Registered module metadata. |
+| `modules.status` | Aggregated module status. |
+| `pumps.status` | Pump runtime state. |
+| `pumps.config.get` | Current pump configuration. |
+| `pumps.config.set` | Update pump configuration and optionally save/apply/reboot. |
+| `soil.readings` | Soil sensor readings and calibration state. |
+| `soil.config.get` | Current soil configuration. |
+| `soil.config.set` | Update soil configuration and optionally save/apply/reboot. |
+| `dht.readings` | DHT reading and runtime state. |
+| `dht.config.get` | Current DHT configuration. |
+| `dht.config.set` | Update DHT configuration and optionally save/apply/reboot. |
+| `relays.get` | Relay state by index, channel, ID, or all relays. |
+| `relays.set` | Set relay state by index, channel, or ID. |
+| `relays.config.get` | Current relay configuration. |
+| `relays.config.set` | Update relay configuration and optionally save/apply/reboot. |
+
+## Metrics
+
+The firmware exposes Prometheus-compatible metrics at:
+
+- `GET /metrics`
+
+Each module contributes metrics via `IModule::writeMetrics(AppContext&, Print&)`. Disabled devices are generally omitted.
+
+Examples include:
+
+- `esp32_pumps_running`
+- `esp32_pumps_remaining_seconds`
+- `esp32_soil_moisture_percent{id="..."}`
+- `esp32_soil_raw{id="..."}`
+- `esp32_dht_temp_c{id="..."}`
+- `esp32_dht_humidity_percent{id="..."}`
+- `esp32_relay_state{id="...",index="..."}`
+
+## Building And Flashing
+
+Build from this directory:
+
+```bash
+pio run
 ```
-src/
-  main.cpp                 # app entry point: wires wifi + web + modules
-  AppContext.h             # shared “context” passed to all modules
-  IModule.h                # module interface (hooks)
-  ModuleManager.h          # holds and runs the list of installed modules
-  Html.h                   # simple HTML helpers used by WebUi and modules
 
-  Config.h / Config.cpp    # persistent configuration (Preferences)
-  WifiManager.h / .cpp     # WiFi connect + provisioning fallback
-   WebUi.h / WebUi.cpp      # shared pages (/ and /config), aggregates module UI
-   McpServer.h / .cpp       # MCP JSON-RPC endpoint
-   /metrics                # Prometheus text metrics (per-module)
+Upload to a connected ESP32:
 
-  devices/
-    ...                    # reusable hardware controllers (no web/UI)
-  modules/
-    ...                    # modules that combine device logic + UI + routes
+```bash
+pio run --target upload
 ```
 
-### Key idea
+Open the serial monitor:
 
-* **Devices** (`src/devices/`) are low-level controllers (pins, ADC reads, etc.).
-* **Modules** (`src/modules/`) are the “plugins” that:
-
-  * own device objects
-  * register routes
-  * render HTML fragments
-  * parse config inputs
-
----
-
-## How the app boots
-
-1. `main.cpp` loads `AppConfig` from `ConfigStore` (Preferences).
-2. `main.cpp` constructs an `AppContext` (server + config + wifi + store).
-3. `main.cpp` installs modules using:
-
-```cpp
-modules.add(pumpModule);
-modules.add(soilModule);
-// etc.
+```bash
+pio device monitor
 ```
 
-4. Modules initialize early (`modules.beginAll(ctx)`) so pins start in safe states.
-5. WiFi connects or falls back to provisioning portal.
-6. Once connected, the web server starts:
+The PlatformIO environment is defined in `platformio.ini` and currently targets `esp32dev` with the Arduino framework.
 
-   * WebUi registers core routes (`/`, `/config`, `/reset_wifi`)
-   * ModuleManager registers module routes
-7. `loop()` ticks:
+## Adding A Module
 
-   * wifi state machine
-   * each module’s `loop()` (non-blocking)
-   * `server.handleClient()` when connected
+Add reusable hardware logic under `src/devices/` and expose it through a module under `src/modules/`.
 
----
-
-## Module creation: recommended pattern
-
-A module should have **two files**:
-
-* `src/modules/MyThingModule.h`
-* `src/modules/MyThingModule.cpp`
-
-It should implement the `IModule` interface:
+A module implements `IModule`:
 
 ```cpp
 class IModule {
@@ -88,328 +143,48 @@ public:
   virtual void loop(AppContext& ctx) = 0;
   virtual void registerRoutes(AppContext& ctx) = 0;
 
-  // optional
-   virtual void renderHome(AppContext& ctx, Print& out);
-   virtual void renderConfig(AppContext& ctx, Print& out);
-   virtual void handleConfigPost(AppContext& ctx);
+  virtual void renderHome(AppContext& ctx, Print& out);
+  virtual void renderConfig(AppContext& ctx, Print& out);
+  virtual void handleConfigPost(AppContext& ctx);
+  virtual void writeApiStatusObject(AppContext& ctx, Print& out);
+  virtual void writeMetrics(AppContext& ctx, Print& out);
+  virtual void appendMcpTools(Print& out, bool& first);
+  virtual bool supportsMcpTool(const char* toolName) const;
+  virtual bool handleMcpToolCall(AppContext& ctx,
+                                 const char* toolName,
+                                 JsonObject args,
+                                 Print& out,
+                                 bool& rebootRequested);
 };
 ```
 
-### What goes where
+Typical steps:
 
-**Device logic**
+1. Add config fields in `src/Config.h`.
+2. Load and save those fields in `src/Config.cpp`.
+3. Add a controller in `src/devices/` if the hardware behavior is reusable.
+4. Add a module in `src/modules/` that owns the controller.
+5. Register module routes in `registerRoutes()`.
+6. Contribute fragments to the home/config pages with `Print&` streaming.
+7. Add API, metrics, and MCP support where useful.
+8. Include and add the module in `src/main.cpp`.
 
-* Put reusable device logic in `src/devices/` (e.g., `RelayController`, `DhtController`, `SoilMoistureController`)
-* That code should *not* know about `WebServer`, HTML, URLs, etc.
-* It should be “pure control + readings” with `begin()` + `loop()`
+Keep `loop()` non-blocking. Prefer `millis()` timers over `delay()` inside module logic.
 
-**Module logic**
+## Python Tooling
 
-* Own the device controller as a member
-* Read config from `ctx.config`
-* Contribute UI and routes
+Python code lives under `apps/`:
 
----
+- `apps/tools/esp32_scraper.py`: discovers module API endpoints, scrapes readings/state, and exports metrics through OTLP.
+- `apps/tools/run_scrape.py`: example fleet scrape/export script with hardcoded local device defaults.
+- `apps/agents/`: LangGraph agent helpers and LLM provider selection.
 
-## Step-by-step: create a new module
+See `apps/agents/README.md` for agent setup and `test/agents/` for live-device scripts.
 
-### Step 1 — Create a device controller (optional but recommended)
+## Known Limitations
 
-Example: `src/devices/RelayController.h/.cpp`
-
-* Expose a small API: `begin(cfg)`, `setOn/off`, `toggle`, `getState`
-* Keep it non-blocking; use `millis()` if you need timing
-
-> If your module is tiny, you can embed everything in the module, but separating device code is better long-term.
-
----
-
-### Step 2 — Add config fields
-
-If your module needs persistent settings, add config fields to `AppConfig` in `src/Config.h`.
-
-Example:
-
-```cpp
-struct RelayConfig {
-  bool enabled = true;
-  int pin = 23;
-  String id = "light_1";
-};
-
-struct AppConfig {
-  ...
-  RelayConfig relay;
-};
-```
-
-Then update `ConfigStore::load()` and `ConfigStore::save()` in `src/Config.cpp` using Preferences keys.
-
-**Guidelines**
-
-* Keep keys short and consistent: `relay_en`, `relay_pin`, `relay_id`
-* Group keys by module name prefix to avoid collisions
-* Save/load in the `NS_CONFIG` namespace (not WiFi settings)
-
----
-
-### Step 3 — Create module files
-
-`src/modules/RelayModule.h`:
-
-```cpp
-#pragma once
-#include "IModule.h"
-#include "devices/RelayController.h"
-
-class RelayModule : public IModule {
-public:
-  const char* name() const override { return "relay"; }
-
-  void begin(AppContext& ctx) override;
-  void loop(AppContext& ctx) override;
-  void registerRoutes(AppContext& ctx) override;
-
-   void renderHome(AppContext& ctx, Print& out) override;
-   void renderConfig(AppContext& ctx, Print& out) override;
-   void handleConfigPost(AppContext& ctx) override;
-
-private:
-  RelayController relay_;
-
-  void handleRelayPage_(AppContext& ctx);
-  void handleRelayApi_(AppContext& ctx);
-};
-```
-
-`src/modules/RelayModule.cpp` should:
-
-* initialize device from config in `begin()`
-* tick the device in `loop()`
-* register its routes in `registerRoutes()`
-* add a Home status box in `renderHome()`
-* add config fields in `renderConfig()`
-* parse POSTed config in `handleConfigPost()`
-
----
-
-### Step 4 — Register module routes
-
-Inside `registerRoutes()`:
-
-```cpp
-void RelayModule::registerRoutes(AppContext& ctx) {
-  ctx.server.on("/relay", HTTP_GET, [&ctx, this]() { handleRelayPage_(ctx); });
-  ctx.server.on("/api/relay", HTTP_GET, [&ctx, this]() { handleRelayApi_(ctx); });
-}
-```
-
-**Rules of thumb**
-
-* UI page: `/relay`, `/lights`, `/dht`, `/soil`, ...
-* JSON endpoint: `/api/relay`, `/api/soil`, ...
-* Keep route names stable. Avoid changing them often.
-
----
-
-### Step 5 — Contribute UI to Home and Config
-
-#### Home (`/`)
-
-Add a compact status box (streamed):
-
-```cpp
-void RelayModule::renderHome(AppContext& ctx, Print& out) {
-  out.print(F("<div class='box'>"));
-  out.print(F("<b>Relay</b><br>"));
-  out.print(F("State: "));
-  out.print(relay_.isOn() ? F("ON") : F("OFF"));
-  out.print(F("<br><a href='/relay'>Open</a>"));
-  out.print(F("</div>"));
-}
-```
-
-#### Config (`/config`)
-
-Add module-specific input fields:
-
-```cpp
-void RelayModule::renderConfig(AppContext& ctx, Print& out) {
-  auto& c = ctx.config.relay;
-  out.print(F("<details class='box'>"));
-  out.print(F("<summary>Relay</summary>"));
-  out.print(F("<label><input type='checkbox' name='relay_en' "));
-  if (c.enabled) out.print(F("checked"));
-  out.print(F("> Enabled</label>"));
-  out.print(F("<label>Pin</label>"));
-  out.print(F("<input type='number' name='relay_pin' value='"));
-  out.print(c.pin);
-  out.print(F("'>"));
-  out.print(F("<label>ID</label>"));
-  out.print(F("<input name='relay_id' value='"));
-  out.print(c.id);
-  out.print(F("'>"));
-  out.print(F("</details>"));
-}
-```
-
-#### Config POST handling
-
-Parse submitted fields:
-
-```cpp
-void RelayModule::handleConfigPost(AppContext& ctx) {
-  auto& s = ctx.server;
-  auto& c = ctx.config.relay;
-
-  c.enabled = s.hasArg("relay_en");
-  if (s.hasArg("relay_pin")) c.pin = s.arg("relay_pin").toInt();
-  if (s.hasArg("relay_id"))  c.id = s.arg("relay_id");
-
-  relay_.begin(c); // apply immediately
-}
-```
-
-**Persistence**
-
-* WebUi saves the full config once after calling all modules’ `handleConfigPost()`:
-
-  * `ctx.configStore.save(ctx.config);`
-* WebUi now supports **Save (Apply)** without reboot and **Save & Reboot**. It reinitializes WiFi only if credentials/hostname changed.
-
----
-
-### Step 6 — Install your module in `main.cpp`
-
-Include + instantiate + add:
-
-```cpp
-#include "modules/RelayModule.h"
-
-RelayModule relayModule;
-
-void setup() {
-  ...
-  modules.add(pumpModule);
-  modules.add(soilModule);
-  modules.add(relayModule);
-  ...
-}
-```
-
-
----
-
-## Design conventions
-
-### Prefer “device + module”
-
-* **Controller**: hardware behavior (pin setup, readings, timing)
-* **Module**: web routes + UI + config + ownership of controller
-
-### Keep `loop()` non-blocking
-
-Use `millis()` timers, not `delay()` (except tiny delays like 2ms in the main loop).
-
-### Avoid dynamic memory in hot paths
-
-* Avoid `new`/`delete` in loops
-* Try not to build enormous `String`s repeatedly at high frequency
-* For JSON, keep it small or serve only on request (which you already do)
-
-### Prefer Print-based rendering
-
-* Use `Print&` in `renderHome` / `renderConfig` to stream HTML and reduce heap fragmentation.
-
-### Route naming
-
-* `/thing` for HTML page
-* `/api/thing` for JSON
-* Keep module names unique
-
-### Config key naming
-
-* Prefix keys with module name:
-
-  * `soil0_pin`, `soil_int`
-  * `relay_pin`, `relay_en`
-* Keep keys stable so old configs continue to work after firmware updates
-
----
-
-## Typical module capabilities
-
-### Monitoring / periodic sampling
-
-In the device controller:
-
-* store `lastReadMs`
-* if `now - lastReadMs >= interval`, read again
-
-### API output
-
-Return a JSON object containing:
-
-* module status
-* readings
-* sensor metadata (id/pin/enabled)
-* timestamps/age for readings
-
-### UI rendering
-
-* Home should be “summary”
-* A dedicated page should show “details”
-
----
-
-## Common pitfalls
-
-### “request handler not found”
-
-Browsers hit `/favicon.ico` and other paths. Add `server.onNotFound(...)` once in `startServices()`.
-
-### ESP32 ADC quirks
-
-Soil sensors use ADC. Readings vary by board/pin/attenuation. Add calibration fields or attenuation settings if needed.
-
----
-
-## MCP (Model Context Protocol) tools
-
-The server exposes a JSON-RPC MCP endpoint at:
-
-* `POST /mcp`
-
-The tool registry is modular. Each module defines its own tools and handlers, and the MCP server delegates to modules via `ModuleManager`.
-
-### Core tools
-
-* `core.info` – uptime, WiFi, IP, hostname
-* `modules.list` – module registry
-* `modules.status` – aggregated status
-
-### Module tools (examples)
-
-* `pumps.status`, `pumps.config.get`, `pumps.config.set`
-* `soil.readings`, `soil.config.get`, `soil.config.set`
-
-You can also build LangGraph agents against MCP; see `agents/` for providers and a sample agent.
-
----
-
-## Metrics
-
-The server exposes a Prometheus-compatible endpoint:
-
-* `GET /metrics`
-
-Each module can emit metrics via `IModule::writeMetrics(AppContext&, Print&)`. Disabled devices are omitted.
-
-### Pin safety
-
-Initialize pins in `begin()` with safe defaults:
-
-* outputs to LOW
-* inputs to INPUT
-
----
+- No authentication is implemented. Use only on trusted networks.
+- Some runtime configuration validation is duplicated between HTTP and MCP paths.
+- The code builds against ArduinoJson v7 because `WiFiProvisioner` requires v7 APIs; some local MCP handlers still use compatibility APIs that emit deprecation warnings.
+- `apps/tools/run_scrape.py` currently contains local, hardcoded device and OTLP endpoint defaults.
+- The live-device tests require an ESP32 already flashed, connected, and reachable on the network.
