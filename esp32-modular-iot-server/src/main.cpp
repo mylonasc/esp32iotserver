@@ -21,6 +21,7 @@
 #include "modules/SoilMoistureModule.h"
 #include "modules/DhtModule.h"
 #include "modules/RelayModule.h"
+#include "modules/ServoModule.h"
 
 #include "esp_heap_caps.h"
 
@@ -55,6 +56,7 @@ PumpModule pumpModule;
 SoilMoistureModule soilModule;
 DhtModule dhtModule;
 RelayModule relayModule;
+ServoModule servoModule;
 
 ModuleManager modules;
 WebUi ui(modules);
@@ -161,6 +163,7 @@ void loop() {
   modules.add(soilModule);
   modules.add(dhtModule);
   modules.add(relayModule);
+  modules.add(servoModule);
         modules.beginAll(app_ctx);
         ui.registerRoutes(app_ctx);
         modules.registerAllRoutes(app_ctx);

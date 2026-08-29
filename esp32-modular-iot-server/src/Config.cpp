@@ -58,6 +58,15 @@ AppConfig ConfigStore::load() {
   cfg.relays.r2.pin     = p.getInt ("relay2_pin", 21);
   cfg.relays.r2.id      = p.getString("relay2_id", "relay_c");
 
+  cfg.servo.enabled      = p.getBool("servo_en", false);
+  cfg.servo.pin          = p.getInt ("servo_pin", 18);
+  cfg.servo.startAngle   = p.getInt ("servo_start", 0);
+  cfg.servo.endAngle     = p.getInt ("servo_end", 180);
+  cfg.servo.motionMode   = p.getInt ("servo_mode", 1);
+  cfg.servo.holdSeconds  = p.getUInt("servo_hold", 2);
+  cfg.servo.stepDelayMs  = p.getUInt("servo_step", 15);
+  cfg.servo.id           = p.getString("servo_id", "servo");
+
   p.end();
 
   p.begin(NS_SETTINGS, false);
@@ -119,6 +128,15 @@ void ConfigStore::save(const AppConfig& cfg) {
   p.putBool("relay2_en", cfg.relays.r2.enabled);
   p.putInt ("relay2_pin", cfg.relays.r2.pin);
   p.putString("relay2_id", cfg.relays.r2.id);
+
+  p.putBool("servo_en", cfg.servo.enabled);
+  p.putInt ("servo_pin", cfg.servo.pin);
+  p.putInt ("servo_start", cfg.servo.startAngle);
+  p.putInt ("servo_end", cfg.servo.endAngle);
+  p.putInt ("servo_mode", cfg.servo.motionMode);
+  p.putUInt("servo_hold", cfg.servo.holdSeconds);
+  p.putUInt("servo_step", cfg.servo.stepDelayMs);
+  p.putString("servo_id", cfg.servo.id);
 
   p.end();
 

@@ -47,6 +47,17 @@ struct RelaysConfig {
   RelayChannelConfig r2;
 };
 
+struct ServoConfig {
+  bool enabled = false;
+  int pin = 18;
+  int startAngle = 0;
+  int endAngle = 180;
+  int motionMode = 1; // 0=one-way, 1=back-and-forth, 2=move-hold-return
+  uint32_t holdSeconds = 2;
+  uint32_t stepDelayMs = 15;
+  String id = "servo";
+};
+
 struct AppConfig {
   String hostname = "esp32";
 
@@ -61,6 +72,8 @@ struct AppConfig {
   DhtConfig dht;
 
   RelaysConfig relays;
+
+  ServoConfig servo;
 };
 
 class ConfigStore {
